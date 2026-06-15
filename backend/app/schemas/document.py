@@ -1,0 +1,19 @@
+from datetime import datetime
+
+from sqlmodel import SQLModel
+
+
+class DocumentRead(SQLModel):
+    """返回给前端的文档数据。
+
+    Day 5 上传文件成功后，会返回 document_id，也会返回完整的文档记录。
+    """
+
+    id: int
+    knowledge_base_id: int
+    filename: str
+    file_path: str
+    file_type: str
+    status: str
+    extracted_text: str
+    created_at: datetime

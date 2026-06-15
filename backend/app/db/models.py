@@ -65,6 +65,10 @@ class Document(SQLModel, table=True):
     # 文档处理状态：uploaded / indexed / failed。
     status: str = Field(default="uploaded", index=True, max_length=50)
 
+    # 从文件中提取出的纯文本。
+    # Day 6 先保存到 documents 表，后续切分 chunk 时可以直接读取这个字段。
+    extracted_text: str = ""
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

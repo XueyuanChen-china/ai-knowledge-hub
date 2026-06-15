@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
@@ -29,6 +30,29 @@ def create_db_and_tables() -> None:
     db_path = settings.database_url.removeprefix("sqlite:///")
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
+    ensure_document_columns()
+
+
+def ensure_document_columns() -> None:
+    """补齐开发期新增的 documents 字段。
+
+    create_all 只会创建不存在的表，不会自动给已有表添加新字段。
+    Day 6 新增 extracted_text 后，旧的本地 SQLite 数据库需要补一次列。
+    正式项目后面应该改用 Alembic 管理迁移。
+    """
+
+    inspector = inspect(engine)
+    if "documents" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("documents")}
+    if "extracted_text" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text("ALTER TABLE documents ADD COLUMN extracted_text TEXT DEFAULT ''")
+        )
 
 
 def get_session():

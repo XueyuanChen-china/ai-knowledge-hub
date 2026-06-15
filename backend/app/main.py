@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
+from app.api.document import router as document_router
 from app.api.knowledge_base import router as knowledge_base_router
+from app.api.knowledge_item import router as knowledge_item_router
 from app.config import get_settings
 from app.db.database import create_db_and_tables
 
@@ -14,6 +16,14 @@ app = FastAPI(title=settings.app_name)
 # 注册知识库 CRUD 路由。
 # 注册后，Swagger 里会出现 /knowledge-bases 相关接口。
 app.include_router(knowledge_base_router)
+
+# 注册知识条目 CRUD 路由。
+# 注册后，Swagger 里会出现 /knowledge-items 相关接口。
+app.include_router(knowledge_item_router)
+
+# 注册文档上传路由。
+# 注册后，Swagger 里会出现 /documents 文件上传接口。
+app.include_router(document_router)
 
 
 @app.on_event("startup")
