@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
 from app.db.database import get_session
-from app.db.models import KnowledgeBase, KnowledgeItem
+from app.db.models import Chunk, KnowledgeBase, KnowledgeItem
+from app.schemas.chunk import ChunkRead
 from app.schemas.knowledge_item import (
     KnowledgeItemCreate,
     KnowledgeItemRead,
@@ -127,6 +128,31 @@ def get_knowledge_item(
         )
 
     return knowledge_item
+
+
+@router.get("/{knowledge_item_id}/chunks", response_model=list[ChunkRead])
+def list_knowledge_item_chunks(
+    knowledge_item_id: int,
+    session: Session = Depends(get_session),
+) -> list[Chunk]:
+    """查询某个知识条目下的所有 chunks。
+
+    对应接口：GET /knowledge-items/{knowledge_item_id}/chunks
+    """
+
+    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
+    if knowledge_item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge item not found",
+        )
+
+    statement = (
+        select(Chunk)
+        .where(Chunk.knowledge_item_id == knowledge_item_id)
+        .order_by(Chunk.chunk_index)
+    )
+    return list(session.exec(statement).all())
 
 
 @router.put("/{knowledge_item_id}", response_model=KnowledgeItemRead)

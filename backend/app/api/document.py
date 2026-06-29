@@ -1,13 +1,22 @@
+import json
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pypdf import PdfReader
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.db.database import get_session
-from app.db.models import Document, KnowledgeBase
-from app.schemas.document import DocumentRead
+from app.db.models import Chunk, Document, KnowledgeBase, KnowledgeItem
+from app.schemas.chunk import ChunkRead
+from app.schemas.document import DocumentChunkResponse, DocumentRead
+from app.services.text_splitter import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    PdfPageText,
+    split_document_text,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -66,6 +75,19 @@ def extract_text_from_file(file_path: Path, suffix: str) -> str:
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Unsupported file type",
     )
+
+
+def extract_pdf_pages(file_path: Path) -> list[PdfPageText]:
+    """按页提取 PDF 文本，并保留页码。"""
+
+    reader = PdfReader(str(file_path))
+    pages = []
+
+    for index, page in enumerate(reader.pages, start=1):
+        page_text = page.extract_text() or ""
+        pages.append(PdfPageText(page_number=index, text=page_text))
+
+    return pages
 
 
 @router.post(
@@ -128,3 +150,153 @@ def upload_document(
     session.refresh(document)
 
     return document
+
+
+@router.post(
+    "/{document_id}/chunks",
+    response_model=DocumentChunkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def split_document_into_chunks(
+    document_id: int,
+    session: Session = Depends(get_session),
+) -> DocumentChunkResponse:
+    """把文档提取文本切成 chunks，并写入 chunks 表。
+
+    对应接口：POST /documents/{document_id}/chunks
+    Day 8 先采用手动触发，方便先确认 extracted_text 是否正确。
+    """
+
+    document = session.get(Document, document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if not document.extracted_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Document has no extracted text",
+        )
+
+    pdf_pages = None
+    if document.file_type == "pdf":
+        pdf_pages = extract_pdf_pages(Path(document.file_path))
+
+    chunk_data_list = split_document_text(
+        document.extracted_text,
+        document.file_type,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+        pdf_pages=pdf_pages,
+    )
+
+    if not chunk_data_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No chunks generated from document",
+        )
+
+    knowledge_item = get_or_create_document_knowledge_item(document, session)
+    delete_existing_document_chunks(document.id, session)
+
+    for index, chunk_data in enumerate(chunk_data_list):
+        metadata = {
+            **chunk_data.metadata,
+            "document_id": document.id,
+            "filename": document.filename,
+            "file_type": document.file_type,
+            "knowledge_item_id": knowledge_item.id,
+            "chunk_index": index,
+        }
+
+        chunk = Chunk(
+            knowledge_base_id=document.knowledge_base_id,
+            document_id=document.id,
+            knowledge_item_id=knowledge_item.id,
+            chunk_index=index,
+            content=chunk_data.content,
+            vector_id=None,
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+        )
+        session.add(chunk)
+
+    session.commit()
+
+    return DocumentChunkResponse(
+        document_id=document.id,
+        knowledge_item_id=knowledge_item.id,
+        chunk_count=len(chunk_data_list),
+    )
+
+
+@router.get("/{document_id}/chunks", response_model=list[ChunkRead])
+def list_document_chunks(
+    document_id: int,
+    session: Session = Depends(get_session),
+) -> list[Chunk]:
+    """查询某个文档生成的所有 chunks。
+
+    对应接口：GET /documents/{document_id}/chunks
+    这个接口用于在 Swagger 里直接验收切分结果，不必打开 DB Browser。
+    """
+
+    document = session.get(Document, document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    statement = (
+        select(Chunk)
+        .where(Chunk.document_id == document_id)
+        .order_by(Chunk.chunk_index)
+    )
+    return list(session.exec(statement).all())
+
+
+def get_or_create_document_knowledge_item(
+    document: Document,
+    session: Session,
+) -> KnowledgeItem:
+    """为文档创建或复用一个 KnowledgeItem。"""
+
+    statement = select(KnowledgeItem).where(
+        KnowledgeItem.source_type == "document",
+        KnowledgeItem.source_document_id == document.id,
+    )
+    knowledge_item = session.exec(statement).first()
+
+    if knowledge_item is not None:
+        knowledge_item.title = document.filename
+        knowledge_item.content = document.extracted_text
+        knowledge_item.updated_at = datetime.utcnow()
+        session.add(knowledge_item)
+        session.flush()
+        return knowledge_item
+
+    knowledge_item = KnowledgeItem(
+        knowledge_base_id=document.knowledge_base_id,
+        title=document.filename,
+        content=document.extracted_text,
+        tags="[]",
+        status="draft",
+        source_type="document",
+        source_document_id=document.id,
+    )
+    session.add(knowledge_item)
+    session.flush()
+    session.refresh(knowledge_item)
+
+    return knowledge_item
+
+
+def delete_existing_document_chunks(document_id: int, session: Session) -> None:
+    """重复触发切分时，先清理旧 chunk，避免重复写入。"""
+
+    statement = select(Chunk).where(Chunk.document_id == document_id)
+    existing_chunks = session.exec(statement).all()
+    for chunk in existing_chunks:
+        session.delete(chunk)

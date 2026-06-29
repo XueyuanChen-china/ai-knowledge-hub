@@ -1,0 +1,1513 @@
+可以。我给你定一个**可落地、适合写简历、不会做炸的详细计划**。你的目标不是做一个“功能很多但都很浅”的系统，而是做一个有完整闭环的项目：
+
+```text
+上传知识 → 入库 → 检索 → Agent 回答 → 人工审核 → 保存会话 → 可视化管理
+```
+
+项目名建议：
+
+```text
+AI Knowledge Hub：企业知识库管理与专家 Agent 平台
+```
+
+---
+
+# 一、项目最终目标
+
+你最后要做出来的是一个可以本地启动的系统：
+
+```text
+前端：React / Next.js + TypeScript
+后端：FastAPI + LangGraph + LangChain
+数据库：SQLite
+向量库：Chroma
+模型：千问 API
+Embedding：HuggingFace Embedding
+```
+
+核心能力：
+
+```text
+1. 创建知识库
+2. 上传文档 / 手动录入知识
+3. 文档切分、Embedding、写入 Chroma
+4. 知识条目管理：增删改查、标签、状态
+5. 语义检索 + 关键词搜索
+6. 专家 Agent 问答
+7. LangGraph 路由：direct / rag / complex
+8. RAG 检索后可进入人工审核 interrupt
+9. checkpoint / thread_id 保存工作流状态
+10. 保存会话记录和引用来源
+11. 前端管理页面和问答页面
+```
+
+第一版不要做：
+
+```text
+多租户
+复杂权限
+多模态
+插件市场
+工作流可视化拖拽
+Redis 队列
+真正生产级部署
+```
+
+这些可以后面加。
+
+---
+
+# 二、项目模块拆分
+
+项目分成 5 个核心模块。
+
+## 1. 知识库管理模块
+
+负责：
+
+```text
+创建知识库
+查看知识库列表
+编辑知识库名称、描述
+删除知识库
+查看知识库下的文档和知识条目
+```
+
+比如：
+
+```text
+知识库：公司制度知识库
+知识库：论文阅读知识库
+知识库：客服 FAQ 知识库
+```
+
+---
+
+## 2. 知识生产模块
+
+负责把知识放进系统。
+
+支持两种方式：
+
+```text
+手动录入知识条目
+上传 txt / md / pdf 文档
+```
+
+上传文档后做：
+
+```text
+读取文档
+切分 chunk
+生成 metadata
+embedding
+写入 Chroma
+把文档和 chunk 信息写入 SQLite
+```
+
+后面加分可以做：
+
+```text
+AI 自动生成摘要
+AI 自动生成标签
+AI 提取知识点
+人工审核后入库
+```
+
+---
+
+## 3. 知识管理模块
+
+负责管理知识条目。
+
+功能：
+
+```text
+知识条目列表
+标题搜索
+标签筛选
+状态筛选：draft / active / disabled
+编辑知识内容
+删除知识
+查看 chunk
+查看向量入库状态
+```
+
+状态设计：
+
+```text
+draft：草稿，不参与 RAG
+active：可用，参与 RAG
+disabled：停用，不参与 RAG
+```
+
+---
+
+## 4. 专家 Agent 问答模块
+
+用户选择一个知识库，然后进入问答页面。
+
+流程：
+
+```text
+用户提问
+  ↓
+LangGraph router 判断问题类型
+  ↓
+direct：普通问题直接回答
+rag：先检索知识库
+complex：多步检索 + 总结
+  ↓
+relevance_check 判断检索质量
+  ↓
+低置信度进入 human_review
+  ↓
+人工确认后继续 answer
+  ↓
+保存会话和引用来源
+```
+
+---
+
+## 5. 人工审核模块
+
+两类审核：
+
+```text
+知识入库审核
+问答检索结果审核
+```
+
+第一版重点做第二个：
+
+```text
+retrieve 后暂停
+展示检索结果
+人工选择继续 / 停止
+继续则 answer
+停止则返回审核未通过
+```
+
+这就是你前面学的：
+
+```python
+interrupt()
+Command(resume=...)
+checkpointer
+thread_id
+```
+
+---
+
+# 三、推荐项目目录结构
+
+建议这样建：
+
+```text
+ai-knowledge-hub/
+  backend/
+    app/
+      main.py
+
+      api/
+        knowledge_base.py
+        knowledge_item.py
+        document.py
+        chat.py
+        review.py
+
+      db/
+        database.py
+        models.py
+
+      schemas/
+        knowledge_base.py
+        knowledge_item.py
+        document.py
+        chat.py
+        review.py
+
+      services/
+        document_loader.py
+        text_splitter.py
+        embedding_service.py
+        vector_service.py
+        rag_service.py
+        llm_service.py
+
+      graph/
+        state.py
+        nodes.py
+        workflow.py
+
+      config.py
+
+    data/
+      uploads/
+      chroma_db/
+
+    requirements.txt
+    .env.example
+
+  frontend/
+    src/
+      app/
+      components/
+      api/
+      pages/
+      stores/
+      types/
+
+  docs/
+    architecture.md
+    api.md
+    demo.md
+
+  README.md
+```
+
+你最重要的是后端这块：
+
+```text
+backend/app/graph/
+```
+
+这里体现你会 LangGraph。
+
+---
+
+# 四、数据库表设计
+
+第一版用 SQLite 就够了。
+
+## 1. knowledge_bases
+
+```text
+id
+name
+description
+created_at
+updated_at
+```
+
+表示一个知识库。
+
+---
+
+## 2. documents
+
+```text
+id
+knowledge_base_id
+filename
+file_path
+file_type
+status
+created_at
+```
+
+表示上传的文件。
+
+status：
+
+```text
+uploaded
+indexed
+failed
+```
+
+---
+
+## 3. knowledge_items
+
+```text
+id
+knowledge_base_id
+title
+content
+tags
+status
+source_type
+source_document_id
+created_at
+updated_at
+```
+
+表示手动录入或从文档提取出来的知识条目。
+
+status：
+
+```text
+draft
+active
+disabled
+```
+
+---
+
+## 4. chunks
+
+```text
+id
+knowledge_base_id
+document_id
+knowledge_item_id
+chunk_index
+content
+vector_id
+metadata_json
+created_at
+```
+
+表示实际进入 Chroma 的 chunk。
+
+---
+
+## 5. conversations
+
+```text
+id
+knowledge_base_id
+title
+thread_id
+created_at
+updated_at
+```
+
+对应一次 Agent 会话。
+
+---
+
+## 6. messages
+
+```text
+id
+conversation_id
+role
+content
+metadata_json
+created_at
+```
+
+保存用户和助手消息。
+
+---
+
+## 7. review_tasks
+
+```text
+id
+conversation_id
+question
+docs_preview
+status
+human_note
+created_at
+updated_at
+```
+
+用于人工审核。
+
+status：
+
+```text
+pending
+approved
+rejected
+```
+
+---
+
+# 五、LangGraph 工作流设计
+
+第一版工作流这样做：
+
+```text
+START
+  ↓
+question_router
+  ↓
+条件分支
+  ├─ direct → direct_answer → save_message → END
+  └─ rag → retrieve → relevance_check
+                    ↓
+             条件分支
+             ├─ confident → answer → save_message → END
+             └─ need_review → human_review interrupt
+                                  ↓
+                           条件分支
+                           ├─ approved → answer → save_message → END
+                           └─ rejected → reject_answer → save_message → END
+```
+
+---
+
+## GraphState 设计
+
+```python
+class GraphState(TypedDict, total=False):
+    question: str
+    knowledge_base_id: int
+    conversation_id: int
+    thread_id: str
+
+    route: str
+
+    retrieved_docs: list
+    context: str
+    docs_preview: str
+    relevance_score: float
+
+    need_human_review: bool
+    human_approved: bool
+    human_note: str
+
+    answer: str
+    citations: list
+```
+
+每个节点只更新一部分 state。
+
+---
+
+## 节点职责
+
+### question_router
+
+负责判断：
+
+```text
+direct
+rag
+complex
+```
+
+第一版可以只做：
+
+```text
+direct / rag
+```
+
+---
+
+### retrieve_node
+
+负责：
+
+```text
+根据 question 检索 Chroma
+拿到 top-k docs
+格式化 context
+生成 docs_preview
+```
+
+---
+
+### relevance_check_node
+
+负责判断检索质量。
+
+第一版简单做：
+
+```text
+如果 top-k 结果为空 → need_review
+如果相似度低 → need_review
+否则 confident
+```
+
+如果 Chroma 暂时不好拿 score，可以先用规则：
+
+```text
+docs 数量 == 0 → need_review
+docs 数量 > 0 → confident
+```
+
+后面再升级。
+
+---
+
+### human_review_node
+
+负责：
+
+```python
+interrupt(review_payload)
+```
+
+暂停图，等待人工确认。
+
+---
+
+### answer_node
+
+负责：
+
+```text
+根据 context + question 调用千问生成答案
+要求引用来源
+```
+
+---
+
+### save_message_node
+
+负责：
+
+```text
+保存用户问题
+保存助手答案
+保存 citations
+保存 conversation
+```
+
+---
+
+# 六、API 设计
+
+后端 FastAPI 先做这些接口。
+
+## 知识库接口
+
+```text
+POST   /api/knowledge-bases
+GET    /api/knowledge-bases
+GET    /api/knowledge-bases/{id}
+PUT    /api/knowledge-bases/{id}
+DELETE /api/knowledge-bases/{id}
+```
+
+---
+
+## 知识条目接口
+
+```text
+POST   /api/knowledge-items
+GET    /api/knowledge-items?knowledge_base_id=&keyword=&status=&tag=
+GET    /api/knowledge-items/{id}
+PUT    /api/knowledge-items/{id}
+DELETE /api/knowledge-items/{id}
+```
+
+---
+
+## 文档上传接口
+
+```text
+POST /api/documents/upload
+POST /api/documents/{id}/index
+GET  /api/documents?knowledge_base_id=
+```
+
+上传后先保存文件，再手动点击“构建索引”。
+
+---
+
+## 搜索接口
+
+```text
+GET /api/search/keyword
+POST /api/search/semantic
+```
+
+语义搜索 body：
+
+```json
+{
+  "knowledge_base_id": 1,
+  "query": "报销流程是什么",
+  "top_k": 5
+}
+```
+
+---
+
+## Agent 问答接口
+
+```text
+POST /api/chat
+```
+
+body：
+
+```json
+{
+  "knowledge_base_id": 1,
+  "conversation_id": 1,
+  "question": "这个制度怎么报销？"
+}
+```
+
+返回：
+
+```json
+{
+  "answer": "...",
+  "route": "rag",
+  "citations": [],
+  "need_review": false
+}
+```
+
+---
+
+## 人工审核接口
+
+如果触发 interrupt，可以返回：
+
+```json
+{
+  "status": "interrupted",
+  "thread_id": "...",
+  "review_payload": {
+    "question": "...",
+    "docs_preview": "..."
+  }
+}
+```
+
+审核继续：
+
+```text
+POST /api/review/resume
+```
+
+body：
+
+```json
+{
+  "thread_id": "xxx",
+  "approved": true,
+  "note": "检索结果可用"
+}
+```
+
+---
+
+# 七、前端页面设计
+
+第一版做 5 个页面即可。
+
+## 1. 知识库列表页
+
+功能：
+
+```text
+展示所有知识库
+新建知识库
+进入知识库详情
+删除知识库
+```
+
+---
+
+## 2. 知识库详情页
+
+包含几个 tab：
+
+```text
+知识条目
+文档管理
+语义搜索
+专家 Agent
+```
+
+---
+
+## 3. 知识条目管理页
+
+功能：
+
+```text
+创建知识
+编辑知识
+删除知识
+标签筛选
+状态切换 draft / active / disabled
+```
+
+---
+
+## 4. 文档上传页
+
+功能：
+
+```text
+上传 txt / md / pdf
+查看上传状态
+点击构建索引
+显示 chunk 数量
+显示入库成功 / 失败
+```
+
+---
+
+## 5. 专家 Agent 问答页
+
+左边：
+
+```text
+会话列表
+```
+
+右边：
+
+```text
+聊天窗口
+引用来源
+如果需要人工审核，显示审核卡片
+```
+
+审核卡片：
+
+```text
+检索结果预览
+通过按钮
+拒绝按钮
+备注输入框
+```
+
+---
+
+# 八、开发计划：4 周版本
+
+你可以按 4 周做。每天都有明确产出。
+
+---
+
+# 第 1 周：后端基础 + 知识库 CRUD
+
+目标：先搭好后端骨架和数据库。
+
+## Day 1：项目初始化
+
+任务：
+
+```text
+创建 ai-knowledge-hub 项目
+创建 backend
+配置 FastAPI
+配置 .env
+配置 SQLite
+配置 SQLAlchemy / SQLModel
+写 README 初版
+```
+
+验收：
+
+```text
+uvicorn app.main:app --reload 能启动
+GET /health 返回 ok
+```
+
+---
+
+## Day 2：数据库模型
+
+任务：
+
+```text
+写 knowledge_bases 表
+写 documents 表
+写 knowledge_items 表
+写 chunks 表
+写 conversations 表
+写 messages 表
+写 review_tasks 表
+```
+
+验收：
+
+```text
+启动后自动创建 SQLite 表
+能用 DB Browser 打开看到表
+```
+
+---
+
+## Day 3：知识库 CRUD API
+
+任务：
+
+```text
+POST /knowledge-bases
+GET /knowledge-bases
+GET /knowledge-bases/{id}
+PUT /knowledge-bases/{id}
+DELETE /knowledge-bases/{id}
+```
+
+验收：
+
+```text
+用 Swagger 能创建、查询、更新、删除知识库
+```
+
+---
+
+## Day 4：知识条目 CRUD API
+
+任务：
+
+```text
+手动创建知识条目
+编辑知识条目
+删除知识条目
+按 knowledge_base_id 查询
+按 status 查询
+```
+
+验收：
+
+```text
+能创建 active / draft / disabled 知识
+```
+
+---
+
+## Day 5：本地文件上传
+
+任务：
+
+```text
+实现上传 txt / md
+保存到 backend/data/uploads
+写 documents 表
+返回 document_id
+```
+
+验收：
+
+```text
+Swagger 上传文件成功
+文件保存到本地
+documents 表有记录
+```
+
+---
+
+## Day 6：PDF 支持
+
+任务：
+
+```text
+接 pypdf
+支持 PDF 文本提取
+保存提取文本
+```
+
+验收：
+
+```text
+上传 PDF 后能读取文本
+```
+
+---
+
+## Day 7：本周整理
+
+任务：
+
+```text
+补 README
+整理 API 文档
+提交 Git
+```
+
+Git commit：
+
+```bash
+git add .
+git commit -m "feat: initialize backend and knowledge CRUD"
+```
+
+---
+
+# 第 2 周：RAG 入库 + 检索
+
+目标：让系统真正能 RAG。
+
+## Day 8：TextSplitter
+
+任务：
+
+```text
+实现 text_splitter.py
+把文档切成 chunks
+chunk_size=1000
+chunk_overlap=200
+```
+
+验收：
+
+```text
+输入一篇文档，能生成多个 chunk
+chunks 表有记录
+```
+
+---
+
+## Day 9：Embedding + Chroma 入库
+
+任务：
+
+```text
+接 HuggingFaceEmbeddings
+接 Chroma
+实现 vector_service.add_chunks()
+给每个 chunk 生成稳定 vector_id
+```
+
+验收：
+
+```text
+点击 index 后，chunks 写入 SQLite
+向量写入 Chroma
+```
+
+---
+
+## Day 10：文档索引 API
+
+任务：
+
+```text
+POST /documents/{id}/index
+```
+
+流程：
+
+```text
+读取 document
+切分
+embedding
+写 Chroma
+写 chunks
+document status 改成 indexed
+```
+
+验收：
+
+```text
+上传文档后可手动构建索引
+```
+
+---
+
+## Day 11：语义搜索 API
+
+任务：
+
+```text
+POST /search/semantic
+```
+
+返回：
+
+```text
+doc_id
+chunk_id
+title
+content preview
+score
+metadata
+```
+
+验收：
+
+```text
+输入问题能搜到相关 chunk
+```
+
+---
+
+## Day 12：关键词搜索 API
+
+任务：
+
+```text
+GET /search/keyword
+```
+
+先用 SQLite like 查询即可。
+
+验收：
+
+```text
+能按关键词搜索知识条目
+```
+
+---
+
+## Day 13：RAG Service
+
+任务：
+
+```text
+实现 rag_service.retrieve()
+实现 rag_service.format_context()
+实现 rag_service.generate_answer()
+```
+
+验收：
+
+```text
+后端内部函数能完成：
+question → docs → context → answer
+```
+
+---
+
+## Day 14：本周整理
+
+任务：
+
+```text
+写 RAG 流程文档
+补充 README
+准备测试数据
+提交 Git
+```
+
+Git commit：
+
+```bash
+git add .
+git commit -m "feat: implement document indexing and semantic search"
+```
+
+---
+
+# 第 3 周：LangGraph Agent Workflow
+
+目标：把 RAG 接成可控工作流。
+
+## Day 15：GraphState + 基础图
+
+任务：
+
+```text
+创建 graph/state.py
+创建 graph/nodes.py
+创建 graph/workflow.py
+实现 START → router → direct/rag
+```
+
+验收：
+
+```text
+direct 问题不检索
+rag 问题进入 retrieve
+```
+
+---
+
+## Day 16：LLM Router
+
+任务：
+
+```text
+router_node 调用千问
+输出 direct / rag / complex
+normalize_route
+规则兜底
+```
+
+验收：
+
+```text
+你好 → direct
+什么是 RAG → direct
+公司制度怎么报销 → rag
+总结这个知识库的重点 → complex
+```
+
+---
+
+## Day 17：Retrieve Node
+
+任务：
+
+```text
+retrieve_node 接 Chroma
+写入 context
+写入 docs_preview
+写入 citations
+```
+
+验收：
+
+```text
+rag 问题能打印检索结果
+```
+
+---
+
+## Day 18：Answer Node
+
+任务：
+
+```text
+answer_node 基于 context 调用千问
+要求引用来源
+```
+
+验收：
+
+```text
+返回答案和引用 doc/chunk
+```
+
+---
+
+## Day 19：Relevance Check Node
+
+任务：
+
+```text
+判断 docs 是否为空
+判断 top score 是否低
+决定 confident / need_review
+```
+
+验收：
+
+```text
+检索结果为空时不直接编答案
+```
+
+---
+
+## Day 20：Checkpoint + Interrupt
+
+任务：
+
+```text
+InMemorySaver
+thread_id
+human_review_node
+interrupt
+Command(resume)
+```
+
+验收：
+
+```text
+retrieve 后暂停
+前端/Swagger/脚本能 resume
+```
+
+---
+
+## Day 21：Chat API 接入 Graph
+
+任务：
+
+```text
+POST /api/chat 调用 graph.invoke
+如果正常结束返回 answer
+如果 interrupt 返回 review_payload
+POST /api/review/resume 恢复图
+```
+
+验收：
+
+```text
+完整流程：
+用户提问 → 检索 → 暂停审核 → 继续生成答案
+```
+
+Git commit：
+
+```bash
+git add .
+git commit -m "feat: implement LangGraph RAG workflow with human review"
+```
+
+---
+
+# 第 4 周：前端 + 产品化 + 简历包装
+
+目标：做成像真实项目。
+
+## Day 22：前端初始化
+
+任务：
+
+```text
+创建 frontend
+React / Next.js + TypeScript
+配置路由
+配置 API client
+配置 UI 组件库
+```
+
+验收：
+
+```text
+前端能启动
+能访问首页
+```
+
+---
+
+## Day 23：知识库列表页
+
+任务：
+
+```text
+展示知识库列表
+创建知识库弹窗
+删除知识库
+进入详情页
+```
+
+验收：
+
+```text
+前端能完整操作 knowledge_base CRUD
+```
+
+---
+
+## Day 24：知识条目管理页
+
+任务：
+
+```text
+列表
+新增
+编辑
+删除
+状态切换
+标签展示
+```
+
+验收：
+
+```text
+能通过前端管理知识条目
+```
+
+---
+
+## Day 25：文档上传和索引页
+
+任务：
+
+```text
+上传文档
+显示文档列表
+点击构建索引
+显示 indexed / failed
+```
+
+验收：
+
+```text
+前端上传文档后，能构建向量索引
+```
+
+---
+
+## Day 26：语义搜索页面
+
+任务：
+
+```text
+输入 query
+展示语义搜索结果
+展示 doc_id / title / preview / score
+```
+
+验收：
+
+```text
+可以像搜索引擎一样查知识库
+```
+
+---
+
+## Day 27：专家 Agent 问答页
+
+任务：
+
+```text
+聊天窗口
+发送问题
+展示答案
+展示引用来源
+如果返回 interrupted，展示审核面板
+点击通过 / 拒绝调用 resume API
+```
+
+验收：
+
+```text
+完整 human-in-the-loop 从前端跑通
+```
+
+---
+
+## Day 28：收尾和简历材料
+
+任务：
+
+```text
+README 完善
+架构图
+功能截图
+接口文档
+本地启动说明
+演示视频
+简历描述
+```
+
+Git commit：
+
+```bash
+git add .
+git commit -m "docs: add project documentation and demo guide"
+```
+
+---
+
+# 九、MVP 验收标准
+
+你做到下面这些，就可以认为 MVP 完成：
+
+```text
+1. 能创建知识库
+2. 能上传文档
+3. 能构建索引
+4. 能语义搜索
+5. 能进入专家 Agent 问答
+6. 普通问题 direct 回答
+7. 知识库问题走 RAG
+8. 检索结果低质量时触发人工审核
+9. 审核通过后继续生成答案
+10. 审核拒绝后停止回答
+11. 会话消息保存
+12. README 能让别人本地跑起来
+```
+
+---
+
+# 十、加分项计划
+
+MVP 完成后，再选两个加分项。
+
+## 加分项 1：一键生成专家 Agent
+
+知识库详情页加按钮：
+
+```text
+生成专家 Agent
+```
+
+生成：
+
+```text
+Agent 名称
+system prompt
+可访问知识库
+回答风格
+引用规则
+```
+
+数据库加表：
+
+```text
+agents
+  id
+  knowledge_base_id
+  name
+  description
+  system_prompt
+  created_at
+```
+
+---
+
+## 加分项 2：Agent 自动提炼新知识
+
+聊天后加一个节点：
+
+```text
+extract_knowledge_node
+```
+
+流程：
+
+```text
+answer
+  ↓
+extract_knowledge
+  ↓
+如果发现新知识 → human_review
+  ↓
+审核通过 → 写入 knowledge_items
+```
+
+这会非常贴合 LangGraph。
+
+---
+
+## 加分项 3：Redis 缓存
+
+第一版不强制。
+
+后面可以加：
+
+```text
+缓存 query → retrieved_docs
+缓存 session
+缓存 LLM answer
+```
+
+简历可写：
+
+```text
+引入 Redis 缓存高频检索结果，降低重复向量检索与模型调用成本。
+```
+
+---
+
+# 十一、简历最终写法
+
+项目完成后可以这样写：
+
+```text
+AI Knowledge Hub：企业知识库管理与专家 Agent 平台
+
+- 基于 FastAPI + React + TypeScript 构建企业知识库管理平台，支持知识库 CRUD、文档上传、知识条目管理、标签分类、状态管理和语义检索。
+- 基于 LangChain + Chroma 实现 RAG 检索链路，完成文档解析、文本切分、Embedding 入库、Top-K 检索、Context 拼接和基于引用的答案生成。
+- 使用 LangGraph 设计可控 Agent Workflow，包含问题路由、RAG 检索、相关性判断、答案生成、会话保存等节点。
+- 实现 Human-in-the-loop 审核机制，在低置信度检索场景下通过 interrupt 暂停工作流，人工确认后使用 Command(resume) 恢复执行。
+- 接入 checkpoint / thread_id 保存图状态，实现多轮会话状态恢复和审核流程延续。
+- 支持一键生成专家 Agent，根据指定知识库生成专属问答助手，并记录会话、引用来源和知识使用情况。
+```
+
+---
+
+# 十二、你现在第一步该做什么
+
+别直接开前端。
+
+你现在先做：
+
+```text
+backend 项目初始化
+FastAPI 启动
+SQLite 数据库
+knowledge_bases CRUD
+```
+
+也就是第 1 周 Day 1 到 Day 3。
+
+你的第一个目标很小：
+
+```text
+打开 Swagger，能创建一个知识库。
+```
+
+等这个跑通，再做文档上传和 RAG 入库。这样项目不会乱。

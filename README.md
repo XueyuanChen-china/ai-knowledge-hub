@@ -10,6 +10,7 @@
 本地文档上传
 PDF 文本提取
 SQLite 数据持久化
+文档混合切分
 ```
 
 ## 技术栈
@@ -74,6 +75,15 @@ PDF 解析：pypdf
 - 支持上传 `.pdf`
 - 提取文本保存到 `documents.extracted_text`
 
+### Day 8：TextSplitter
+
+- 实现混合切分策略
+- `chunk_size=1000`
+- `chunk_overlap=200`
+- `POST /documents/{document_id}/chunks`
+- 自动创建文档来源的 `KnowledgeItem`
+- 写入 `chunks` 表
+
 ## 项目结构
 
 ```text
@@ -90,9 +100,12 @@ ai-knowledge-hub/
         database.py
         models.py
       schemas/
+        chunk.py
         document.py
         knowledge_base.py
         knowledge_item.py
+      services/
+        text_splitter.py
     data/
       uploads/
       sqlite/
@@ -106,6 +119,7 @@ ai-knowledge-hub/
     day-04-knowledge-item-crud.md
     day-05-local-file-upload.md
     day-06-pdf-support.md
+    day-08-text-splitter.md
   README.md
 ```
 
@@ -192,3 +206,4 @@ SQLModel.metadata.create_all(engine)
 - [Day 4：知识条目 CRUD API](docs/day-04-knowledge-item-crud.md)
 - [Day 5：本地文件上传](docs/day-05-local-file-upload.md)
 - [Day 6：PDF 支持](docs/day-06-pdf-support.md)
+- [Day 8：TextSplitter](docs/day-08-text-splitter.md)

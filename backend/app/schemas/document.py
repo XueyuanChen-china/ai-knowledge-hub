@@ -17,3 +17,11 @@ class DocumentRead(SQLModel):
     status: str
     extracted_text: str
     created_at: datetime
+
+
+class DocumentChunkResponse(SQLModel):
+    """文档切分后的响应。"""
+
+    document_id: int
+    knowledge_item_id: int
+    chunk_count: int

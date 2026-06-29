@@ -232,6 +232,78 @@ txt / md / pdf 文本保存到 documents.extracted_text
 400 Only .md, .pdf, .txt files are supported
 ```
 
+### `POST /documents/{document_id}/chunks`
+
+把文档提取文本切成 chunk，并写入 `chunks` 表。
+
+处理流程：
+
+```text
+读取 documents.extracted_text
+  ↓
+根据 file_type 选择切分策略
+  ↓
+创建或复用 KnowledgeItem
+  ↓
+删除该文档旧 chunks
+  ↓
+写入新 chunks
+```
+
+响应示例：
+
+```json
+{
+  "document_id": 1,
+  "knowledge_item_id": 3,
+  "chunk_count": 5
+}
+```
+
+如果文档不存在，返回：
+
+```text
+404 Document not found
+```
+
+如果文档没有可提取文本，返回：
+
+```text
+400 Document has no extracted text
+```
+
+### `GET /documents/{document_id}/chunks`
+
+查询某个文档生成的所有 chunks。
+
+这个接口用于直接在 Swagger 里查看切分结果，不需要额外安装 DB Browser。
+
+响应示例：
+
+```json
+[
+  {
+    "id": 1,
+    "knowledge_base_id": 1,
+    "document_id": 1,
+    "knowledge_item_id": 3,
+    "chunk_index": 0,
+    "content": "第一段内容……",
+    "vector_id": null,
+    "metadata_json": "{\"document_id\": 1}",
+    "created_at": "2026-06-16T10:00:00"
+  }
+]
+```
+
+## Chunk 查询 API
+
+### `GET /knowledge-items/{knowledge_item_id}/chunks`
+
+查询某个知识条目下的所有 chunks。
+
+这个接口适合检查某条知识最终参与检索的切片内容。
+
 ## 推荐验收顺序
 
 1. `GET /health`
@@ -241,4 +313,6 @@ txt / md / pdf 文本保存到 documents.extracted_text
 5. `GET /knowledge-items?knowledge_base_id=1`
 6. `GET /knowledge-items?status=active`
 7. `POST /documents` 上传 `.txt`、`.md`、`.pdf`
-8. 用 DB Browser 打开 SQLite，检查 `documents.extracted_text`
+8. `POST /documents/{document_id}/chunks`
+9. `GET /documents/{document_id}/chunks`
+10. `GET /knowledge-items/{knowledge_item_id}/chunks`
