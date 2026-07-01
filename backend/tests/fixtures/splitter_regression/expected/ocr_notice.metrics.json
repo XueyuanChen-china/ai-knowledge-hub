@@ -1,0 +1,19 @@
+{
+  "element_count": 6,
+  "section_count": 3,
+  "block_count": 6,
+  "chunk_count": 3,
+  "avg_chunk_length": 37.67,
+  "min_chunk_length": 29,
+  "max_chunk_length": 51,
+  "oversized_chunk_count": 0,
+  "suspicious_chunk_start_count": 1,
+  "noise_chunk_count": 0,
+  "table_fragment_chunk_count": 0,
+  "element_source_parser_coverage_ratio": 1.0,
+  "block_heading_path_coverage_ratio": 1.0,
+  "heading_prefix_applicable_chunk_count": 3,
+  "heading_prefix_ratio": 1.0,
+  "table_chunk_count": 0,
+  "table_header_retention_ratio": 0.0
+}

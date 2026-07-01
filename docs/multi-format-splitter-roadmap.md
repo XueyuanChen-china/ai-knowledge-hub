@@ -99,6 +99,12 @@ backend/app/services/document_splitter/chunk_assembler.py
 - Markdown 的 `# / ## / ###` 主边界规则
 - plain text 标题检测 fallback
 
+当前阶段说明：
+
+- `parse_splitter_source` 已经会把 Markdown / TXT 解析成 `DocumentElement[]`
+- `section_builder` 已经支持从 `DocumentElement` 构建 `Section / Block`
+- 兼容层 `text_splitter.py` 继续对外保留原调用方式
+
 ### Phase 3：增强 plain text fallback
 
 目标：
@@ -107,12 +113,24 @@ backend/app/services/document_splitter/chunk_assembler.py
 - 增加标题检测置信度
 - 增加噪声文本容错
 
+当前阶段说明：
+
+- `plain_text_parser` 已加入标题候选评分与正文承接过滤
+- OCR 风格空格标题会先做轻量归一化
+- `split_pdf_sections` 会先尝试共用 plain text 标题检测，失败再退回按页 fallback
+
 ### Phase 4：CSV parser
 
 目标：
 
 - 建立第一版表格型文件 parser
 - 支持 header 检测、row group chunk、header 保留、行范围 metadata
+
+当前阶段说明：
+
+- `csv_parser` 已经会把 CSV 文本解析成 `table DocumentElement`
+- 会检测 header，并转换成 Markdown table 形式供现有 table splitter 复用
+- table chunk 会保留 header，并补上 `row_start / row_end / row_count` metadata
 
 ### Phase 5：Excel parser 基础版
 
@@ -121,12 +139,24 @@ backend/app/services/document_splitter/chunk_assembler.py
 - 支持多 sheet、used range、基础 table region 检测
 - 支持 row-wise table chunk
 
+当前阶段说明：
+
+- `excel_parser` 已支持 `.xlsx` 工作簿解析
+- 会按 sheet 检测 used range，再按空行拆基础 table region
+- 每个 chunk 会保留 `sheet_name / row_start / row_end / col_start / col_end`
+
 ### Phase 6：DOCX parser 基础版
 
 目标：
 
 - 优先使用 Word 原生结构
 - 支持 heading / paragraph / list / table
+
+当前阶段说明：
+
+- `docx_parser` 已支持按 Word 原生顺序读取 paragraph / table
+- heading / list / table 会保留结构类型，而不是直接降成纯文本
+- `.docx` 上传与切片链路已经接入
 
 ### Phase 7：PDF text fallback 版
 
@@ -135,12 +165,24 @@ backend/app/services/document_splitter/chunk_assembler.py
 - 先解决“一页一个 section 太粗”的问题
 - 支持标题检测、跨页 section、无标题按页 fallback
 
+当前阶段说明：
+
+- PDF text fallback 现在只要检测到可靠标题，就会按标题组织 section
+- 单个标题也可以把后续多页正文组织成跨页 section
+- 完全无标题时，仍然安全退回按页 fallback
+
 ### Phase 8：PDF layout 增强版
 
 目标：
 
 - 引入 layout 信息
 - 支持 bbox、reading order、多栏、页眉页脚去重、表格抽取
+
+当前阶段说明：
+
+- PDF 有文件路径时，优先走 `pdfplumber` layout parser
+- 会抽取 word-level bbox，做基础双栏 reading order、重复页眉页脚去重、表格检测
+- layout parser 失败时，仍然退回原来的 text fallback
 
 ### Phase 9：回归测试与评估
 
@@ -149,6 +191,15 @@ backend/app/services/document_splitter/chunk_assembler.py
 - 固化样本集
 - 固化 `elements / sections / blocks / chunks` 输出
 - 建立质量指标
+
+当前阶段说明：
+
+- 已新增首批回归样本集，放在 `backend/tests/fixtures/splitter_regression/samples`
+- 已新增二进制回归样本集，放在 `backend/tests/fixtures/splitter_regression/binary_samples`
+- 已新增快照生成与质量评估模块：`evaluation.py`
+- 已新增基线生成脚本，会输出 `snapshot.json / metrics.json`
+- 已新增二进制样本生成脚本，用于稳定重建 `pdf/docx/xlsx` fixtures
+- 已新增回归测试，覆盖快照比对、指标比对和基础质量门禁
 
 ---
 

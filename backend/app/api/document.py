@@ -17,11 +17,13 @@ from app.services.text_splitter import (
     PdfPageText,
     split_document_text,
 )
+from app.services.document_splitter.parsers.docx_parser import document_to_text
+from app.services.document_splitter.parsers.excel_parser import workbook_to_text
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 UPLOAD_DIR = Path("data/uploads")
-ALLOWED_FILE_EXTENSIONS = {".txt", ".md", ".pdf"}
+ALLOWED_FILE_EXTENSIONS = {".txt", ".md", ".pdf", ".xlsx", ".docx"}
 
 
 def ensure_knowledge_base_exists(
@@ -55,7 +57,7 @@ def validate_upload_file(file: UploadFile) -> str:
 
 
 def extract_text_from_file(file_path: Path, suffix: str) -> str:
-    """从 txt / md / pdf 文件中提取纯文本。"""
+    """从 txt / md / pdf / xlsx / docx 文件中提取纯文本。"""
 
     if suffix in {".txt", ".md"}:
         return file_path.read_text(encoding="utf-8")
@@ -70,6 +72,12 @@ def extract_text_from_file(file_path: Path, suffix: str) -> str:
                 page_texts.append(page_text.strip())
 
         return "\n\n".join(page_texts)
+
+    if suffix == ".xlsx":
+        return workbook_to_text(str(file_path))
+
+    if suffix == ".docx":
+        return document_to_text(str(file_path))
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -100,7 +108,7 @@ def upload_document(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
 ) -> Document:
-    """上传 txt / md / pdf 文件。
+    """上传 txt / md / pdf / xlsx / docx 文件。
 
     对应接口：POST /documents
     上传成功后：
@@ -190,6 +198,9 @@ def split_document_into_chunks(
         chunk_size=DEFAULT_CHUNK_SIZE,
         chunk_overlap=DEFAULT_CHUNK_OVERLAP,
         pdf_pages=pdf_pages,
+        pdf_path=document.file_path if document.file_type == "pdf" else None,
+        spreadsheet_path=document.file_path if document.file_type == "xlsx" else None,
+        word_path=document.file_path if document.file_type == "docx" else None,
     )
 
     if not chunk_data_list:

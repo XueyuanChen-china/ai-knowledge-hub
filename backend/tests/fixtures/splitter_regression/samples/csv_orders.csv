@@ -1,0 +1,5 @@
+order_id,customer,amount,status
+1001,Alice,95,paid
+1002,Bob,120,draft
+1003,Carol,88,paid
+1004,David,130,disabled

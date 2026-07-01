@@ -1,0 +1,37 @@
+[
+  {
+    "name": "markdown_handbook",
+    "file_type": "md",
+    "path": "samples/markdown_handbook.md"
+  },
+  {
+    "name": "plain_text_policy",
+    "file_type": "txt",
+    "path": "samples/plain_text_policy.txt"
+  },
+  {
+    "name": "ocr_notice",
+    "file_type": "txt",
+    "path": "samples/ocr_notice.txt"
+  },
+  {
+    "name": "csv_orders",
+    "file_type": "csv",
+    "path": "samples/csv_orders.csv"
+  },
+  {
+    "name": "workbook_orders",
+    "file_type": "xlsx",
+    "spreadsheet_path": "binary_samples/workbook_orders.xlsx"
+  },
+  {
+    "name": "word_handbook",
+    "file_type": "docx",
+    "word_path": "binary_samples/word_handbook.docx"
+  },
+  {
+    "name": "pdf_policy",
+    "file_type": "pdf",
+    "pdf_path": "binary_samples/pdf_policy.pdf"
+  }
+]

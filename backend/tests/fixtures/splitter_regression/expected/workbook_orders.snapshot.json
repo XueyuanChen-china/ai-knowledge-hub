@@ -1,0 +1,320 @@
+{
+  "file_type": "xlsx",
+  "options": {
+    "target_chunk_size": 850,
+    "max_chunk_size": 1000,
+    "chunk_overlap": 200
+  },
+  "elements": [
+    {
+      "col_end": "D",
+      "col_start": "A",
+      "element_type": "table",
+      "metadata": {
+        "block_type": "table",
+        "col_end": "D",
+        "col_start": "A",
+        "column_count": 4,
+        "file_type": "xlsx",
+        "has_header": true,
+        "header_row": 1,
+        "header_row_count": 1,
+        "header_values": [
+          "order_id",
+          "customer",
+          "amount",
+          "status"
+        ],
+        "heading_path": [
+          "Orders"
+        ],
+        "row_count": 3,
+        "row_end": 4,
+        "row_start": 2,
+        "sheet_index": 0,
+        "sheet_name": "Orders",
+        "sheet_used_range": "A1:D4",
+        "source_parser": "excel_parser",
+        "splitter": "excel_table_block",
+        "table_format": "excel_markdown",
+        "table_region_index": 0
+      },
+      "row_end": 4,
+      "row_start": 2,
+      "sheet_name": "Orders",
+      "source_index": 0,
+      "text": "| order_id | customer | amount | status |\n| --- | --- | --- | --- |\n| 1001 | Alice | 95 | paid |\n| 1002 | Bob | 120 | draft |\n| 1003 | Carol | 88 | paid |"
+    },
+    {
+      "col_end": "B",
+      "col_start": "A",
+      "element_type": "table",
+      "metadata": {
+        "block_type": "table",
+        "col_end": "B",
+        "col_start": "A",
+        "column_count": 2,
+        "file_type": "xlsx",
+        "has_header": true,
+        "header_row": 1,
+        "header_row_count": 1,
+        "header_values": [
+          "metric",
+          "value"
+        ],
+        "heading_path": [
+          "Summary"
+        ],
+        "row_count": 2,
+        "row_end": 3,
+        "row_start": 2,
+        "sheet_index": 1,
+        "sheet_name": "Summary",
+        "sheet_used_range": "A1:B3",
+        "source_parser": "excel_parser",
+        "splitter": "excel_table_block",
+        "table_format": "excel_markdown",
+        "table_region_index": 0
+      },
+      "row_end": 3,
+      "row_start": 2,
+      "sheet_name": "Summary",
+      "source_index": 1,
+      "text": "| metric | value |\n| --- | --- |\n| total_orders | 3 |\n| active_status | paid |"
+    }
+  ],
+  "sections": [
+    {
+      "blocks": [
+        {
+          "block_type": "table",
+          "content": "| order_id | customer | amount | status |\n| --- | --- | --- | --- |\n| 1001 | Alice | 95 | paid |\n| 1002 | Bob | 120 | draft |\n| 1003 | Carol | 88 | paid |",
+          "metadata": {
+            "block_type": "table",
+            "col_end": "D",
+            "col_start": "A",
+            "column_count": 4,
+            "file_type": "xlsx",
+            "has_header": true,
+            "header_row": 1,
+            "header_row_count": 1,
+            "header_values": [
+              "order_id",
+              "customer",
+              "amount",
+              "status"
+            ],
+            "heading_path": [
+              "Orders"
+            ],
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "row_count": 3,
+            "row_end": 4,
+            "row_start": 2,
+            "sheet_index": 0,
+            "sheet_name": "Orders",
+            "sheet_used_range": "A1:D4",
+            "source_parser": "excel_parser",
+            "splitter": "excel_table_block",
+            "table_format": "excel_markdown",
+            "table_region_index": 0
+          }
+        }
+      ],
+      "heading_path": [
+        "Orders"
+      ],
+      "level": 1,
+      "metadata": {
+        "file_type": "xlsx",
+        "splitter": "xlsx_context_structure"
+      }
+    },
+    {
+      "blocks": [
+        {
+          "block_type": "table",
+          "content": "| metric | value |\n| --- | --- |\n| total_orders | 3 |\n| active_status | paid |",
+          "metadata": {
+            "block_type": "table",
+            "col_end": "B",
+            "col_start": "A",
+            "column_count": 2,
+            "file_type": "xlsx",
+            "has_header": true,
+            "header_row": 1,
+            "header_row_count": 1,
+            "header_values": [
+              "metric",
+              "value"
+            ],
+            "heading_path": [
+              "Summary"
+            ],
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "row_count": 2,
+            "row_end": 3,
+            "row_start": 2,
+            "sheet_index": 1,
+            "sheet_name": "Summary",
+            "sheet_used_range": "A1:B3",
+            "source_parser": "excel_parser",
+            "splitter": "excel_table_block",
+            "table_format": "excel_markdown",
+            "table_region_index": 0
+          }
+        }
+      ],
+      "heading_path": [
+        "Summary"
+      ],
+      "level": 1,
+      "metadata": {
+        "file_type": "xlsx",
+        "splitter": "xlsx_context_structure"
+      }
+    }
+  ],
+  "blocks": [
+    {
+      "block_type": "table",
+      "content": "| order_id | customer | amount | status |\n| --- | --- | --- | --- |\n| 1001 | Alice | 95 | paid |\n| 1002 | Bob | 120 | draft |\n| 1003 | Carol | 88 | paid |",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "table",
+        "col_end": "D",
+        "col_start": "A",
+        "column_count": 4,
+        "file_type": "xlsx",
+        "has_header": true,
+        "header_row": 1,
+        "header_row_count": 1,
+        "header_values": [
+          "order_id",
+          "customer",
+          "amount",
+          "status"
+        ],
+        "heading_path": [
+          "Orders"
+        ],
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "row_count": 3,
+        "row_end": 4,
+        "row_start": 2,
+        "section_heading_path": [
+          "Orders"
+        ],
+        "section_index": 0,
+        "section_level": 1,
+        "sheet_index": 0,
+        "sheet_name": "Orders",
+        "sheet_used_range": "A1:D4",
+        "source_parser": "excel_parser",
+        "splitter": "excel_table_block",
+        "table_format": "excel_markdown",
+        "table_region_index": 0
+      }
+    },
+    {
+      "block_type": "table",
+      "content": "| metric | value |\n| --- | --- |\n| total_orders | 3 |\n| active_status | paid |",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "table",
+        "col_end": "B",
+        "col_start": "A",
+        "column_count": 2,
+        "file_type": "xlsx",
+        "has_header": true,
+        "header_row": 1,
+        "header_row_count": 1,
+        "header_values": [
+          "metric",
+          "value"
+        ],
+        "heading_path": [
+          "Summary"
+        ],
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "row_count": 2,
+        "row_end": 3,
+        "row_start": 2,
+        "section_heading_path": [
+          "Summary"
+        ],
+        "section_index": 1,
+        "section_level": 1,
+        "sheet_index": 1,
+        "sheet_name": "Summary",
+        "sheet_used_range": "A1:B3",
+        "source_parser": "excel_parser",
+        "splitter": "excel_table_block",
+        "table_format": "excel_markdown",
+        "table_region_index": 0
+      }
+    }
+  ],
+  "chunks": [
+    {
+      "content": "# Orders\n\n| order_id | customer | amount | status |\n| --- | --- | --- | --- |\n| 1001 | Alice | 95 | paid |\n| 1002 | Bob | 120 | draft |\n| 1003 | Carol | 88 | paid |",
+      "metadata": {
+        "block_type": "table",
+        "chunk_overlap": 200,
+        "col_end": "D",
+        "col_start": "A",
+        "column_count": 4,
+        "file_type": "xlsx",
+        "has_header": true,
+        "header_row": 1,
+        "heading_path": [
+          "Orders"
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "row_count": 3,
+        "row_end": 4,
+        "row_start": 2,
+        "sheet_index": 0,
+        "sheet_name": "Orders",
+        "sheet_used_range": "A1:D4",
+        "splitter": "excel_table_block",
+        "table_region_index": 0,
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "# Summary\n\n| metric | value |\n| --- | --- |\n| total_orders | 3 |\n| active_status | paid |",
+      "metadata": {
+        "block_type": "table",
+        "chunk_overlap": 200,
+        "col_end": "B",
+        "col_start": "A",
+        "column_count": 2,
+        "file_type": "xlsx",
+        "has_header": true,
+        "header_row": 1,
+        "heading_path": [
+          "Summary"
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "row_count": 2,
+        "row_end": 3,
+        "row_start": 2,
+        "sheet_index": 1,
+        "sheet_name": "Summary",
+        "sheet_used_range": "A1:B3",
+        "splitter": "excel_table_block",
+        "table_region_index": 0,
+        "target_chunk_size": 850
+      }
+    }
+  ]
+}

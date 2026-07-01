@@ -1,0 +1,497 @@
+{
+  "file_type": "pdf",
+  "options": {
+    "target_chunk_size": 850,
+    "max_chunk_size": 1000,
+    "chunk_overlap": 200
+  },
+  "elements": [
+    {
+      "bbox": [
+        72.0,
+        59.31200000000001,
+        192.94400000000002,
+        75.31200000000001
+      ],
+      "element_type": "heading",
+      "level": 1,
+      "metadata": {
+        "block_type": "heading",
+        "column_index": 0,
+        "file_type": "pdf",
+        "font_size": 16.0,
+        "heading_level": 1,
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "page_end": 1,
+        "page_start": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_heading_block"
+      },
+      "page_end": 1,
+      "page_start": 1,
+      "source_index": 0,
+      "text": "1. Review Rules"
+    },
+    {
+      "bbox": [
+        72.0,
+        92.48400000000004,
+        341.4480000000001,
+        124.48400000000004
+      ],
+      "element_type": "paragraph",
+      "metadata": {
+        "block_type": "paragraph",
+        "column_index": 0,
+        "file_type": "pdf",
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "page_end": 1,
+        "page_start": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_paragraph_block"
+      },
+      "page_end": 1,
+      "page_start": 1,
+      "source_index": 1,
+      "text": "Reviewers must check title, body, tags, and status. Only active records can enter retrieval."
+    },
+    {
+      "bbox": [
+        72.0,
+        172.0,
+        392.0,
+        244.0
+      ],
+      "col_end": "B",
+      "col_start": "A",
+      "element_type": "table",
+      "metadata": {
+        "block_type": "table",
+        "col_end": "B",
+        "col_start": "A",
+        "column_count": 2,
+        "column_index": 0,
+        "file_type": "pdf",
+        "has_header": true,
+        "header_row_count": 1,
+        "header_values": [
+          "field",
+          "value"
+        ],
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "page_end": 1,
+        "page_start": 1,
+        "row_count": 2,
+        "row_end": 3,
+        "row_start": 2,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_table_block",
+        "table_format": "pdf_layout_markdown"
+      },
+      "page_end": 1,
+      "page_start": 1,
+      "row_end": 3,
+      "row_start": 2,
+      "source_index": 2,
+      "text": "| field | value |\n| --- | --- |\n| status | active |\n| source_type | document |"
+    },
+    {
+      "bbox": [
+        72.0,
+        59.31200000000001,
+        184.912,
+        75.31200000000001
+      ],
+      "element_type": "heading",
+      "level": 1,
+      "metadata": {
+        "block_type": "heading",
+        "column_index": 0,
+        "file_type": "pdf",
+        "font_size": 16.0,
+        "heading_level": 1,
+        "heading_path": [
+          "2. Upload Flow"
+        ],
+        "page_end": 2,
+        "page_start": 2,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_heading_block"
+      },
+      "page_end": 2,
+      "page_start": 2,
+      "source_index": 3,
+      "text": "2. Upload Flow"
+    },
+    {
+      "bbox": [
+        72.0,
+        92.48400000000004,
+        364.77600000000007,
+        124.48400000000004
+      ],
+      "element_type": "paragraph",
+      "metadata": {
+        "block_type": "paragraph",
+        "column_index": 0,
+        "file_type": "pdf",
+        "heading_path": [
+          "2. Upload Flow"
+        ],
+        "page_end": 2,
+        "page_start": 2,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_paragraph_block"
+      },
+      "page_end": 2,
+      "page_start": 2,
+      "source_index": 4,
+      "text": "TXT, Markdown, Word, PDF, and Excel can be parsed. Metadata keeps source and page traceability."
+    }
+  ],
+  "sections": [
+    {
+      "blocks": [
+        {
+          "block_type": "heading",
+          "content": "1. Review Rules",
+          "metadata": {
+            "block_type": "heading",
+            "column_index": 0,
+            "file_type": "pdf",
+            "font_size": 16.0,
+            "heading_level": 1,
+            "heading_path": [
+              "1. Review Rules"
+            ],
+            "page_end": 1,
+            "page_start": 1,
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "source_parser": "pdf_layout_parser",
+            "splitter": "pdf_layout_heading_block"
+          }
+        },
+        {
+          "block_type": "paragraph",
+          "content": "Reviewers must check title, body, tags, and status. Only active records can enter retrieval.",
+          "metadata": {
+            "block_type": "paragraph",
+            "column_index": 0,
+            "file_type": "pdf",
+            "heading_path": [
+              "1. Review Rules"
+            ],
+            "page_end": 1,
+            "page_start": 1,
+            "paragraph_end": 1,
+            "paragraph_start": 1,
+            "source_parser": "pdf_layout_parser",
+            "splitter": "pdf_layout_paragraph_block"
+          }
+        },
+        {
+          "block_type": "table",
+          "content": "| field | value |\n| --- | --- |\n| status | active |\n| source_type | document |",
+          "metadata": {
+            "block_type": "table",
+            "col_end": "B",
+            "col_start": "A",
+            "column_count": 2,
+            "column_index": 0,
+            "file_type": "pdf",
+            "has_header": true,
+            "header_row_count": 1,
+            "header_values": [
+              "field",
+              "value"
+            ],
+            "heading_path": [
+              "1. Review Rules"
+            ],
+            "page_end": 1,
+            "page_start": 1,
+            "paragraph_end": 2,
+            "paragraph_start": 2,
+            "row_count": 2,
+            "row_end": 3,
+            "row_start": 2,
+            "source_parser": "pdf_layout_parser",
+            "splitter": "pdf_layout_table_block",
+            "table_format": "pdf_layout_markdown"
+          }
+        }
+      ],
+      "heading_path": [
+        "1. Review Rules"
+      ],
+      "level": 1,
+      "metadata": {
+        "file_type": "pdf",
+        "page_end": 1,
+        "page_start": 1,
+        "splitter": "pdf_heading_structure"
+      }
+    },
+    {
+      "blocks": [
+        {
+          "block_type": "heading",
+          "content": "2. Upload Flow",
+          "metadata": {
+            "block_type": "heading",
+            "column_index": 0,
+            "file_type": "pdf",
+            "font_size": 16.0,
+            "heading_level": 1,
+            "heading_path": [
+              "2. Upload Flow"
+            ],
+            "page_end": 2,
+            "page_start": 2,
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "source_parser": "pdf_layout_parser",
+            "splitter": "pdf_layout_heading_block"
+          }
+        },
+        {
+          "block_type": "paragraph",
+          "content": "TXT, Markdown, Word, PDF, and Excel can be parsed. Metadata keeps source and page traceability.",
+          "metadata": {
+            "block_type": "paragraph",
+            "column_index": 0,
+            "file_type": "pdf",
+            "heading_path": [
+              "2. Upload Flow"
+            ],
+            "page_end": 2,
+            "page_start": 2,
+            "paragraph_end": 1,
+            "paragraph_start": 1,
+            "source_parser": "pdf_layout_parser",
+            "splitter": "pdf_layout_paragraph_block"
+          }
+        }
+      ],
+      "heading_path": [
+        "2. Upload Flow"
+      ],
+      "level": 1,
+      "metadata": {
+        "file_type": "pdf",
+        "page_end": 2,
+        "page_start": 2,
+        "splitter": "pdf_heading_structure"
+      }
+    }
+  ],
+  "blocks": [
+    {
+      "block_type": "heading",
+      "content": "1. Review Rules",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "heading",
+        "column_index": 0,
+        "file_type": "pdf",
+        "font_size": 16.0,
+        "heading_level": 1,
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "page_end": 1,
+        "page_start": 1,
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "section_heading_path": [
+          "1. Review Rules"
+        ],
+        "section_index": 0,
+        "section_level": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_heading_block"
+      }
+    },
+    {
+      "block_type": "paragraph",
+      "content": "Reviewers must check title, body, tags, and status. Only active records can enter retrieval.",
+      "metadata": {
+        "block_index": 1,
+        "block_type": "paragraph",
+        "column_index": 0,
+        "file_type": "pdf",
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "page_end": 1,
+        "page_start": 1,
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "section_heading_path": [
+          "1. Review Rules"
+        ],
+        "section_index": 0,
+        "section_level": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_paragraph_block"
+      }
+    },
+    {
+      "block_type": "table",
+      "content": "| field | value |\n| --- | --- |\n| status | active |\n| source_type | document |",
+      "metadata": {
+        "block_index": 2,
+        "block_type": "table",
+        "col_end": "B",
+        "col_start": "A",
+        "column_count": 2,
+        "column_index": 0,
+        "file_type": "pdf",
+        "has_header": true,
+        "header_row_count": 1,
+        "header_values": [
+          "field",
+          "value"
+        ],
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "page_end": 1,
+        "page_start": 1,
+        "paragraph_end": 2,
+        "paragraph_start": 2,
+        "row_count": 2,
+        "row_end": 3,
+        "row_start": 2,
+        "section_heading_path": [
+          "1. Review Rules"
+        ],
+        "section_index": 0,
+        "section_level": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_table_block",
+        "table_format": "pdf_layout_markdown"
+      }
+    },
+    {
+      "block_type": "heading",
+      "content": "2. Upload Flow",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "heading",
+        "column_index": 0,
+        "file_type": "pdf",
+        "font_size": 16.0,
+        "heading_level": 1,
+        "heading_path": [
+          "2. Upload Flow"
+        ],
+        "page_end": 2,
+        "page_start": 2,
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "section_heading_path": [
+          "2. Upload Flow"
+        ],
+        "section_index": 1,
+        "section_level": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_heading_block"
+      }
+    },
+    {
+      "block_type": "paragraph",
+      "content": "TXT, Markdown, Word, PDF, and Excel can be parsed. Metadata keeps source and page traceability.",
+      "metadata": {
+        "block_index": 1,
+        "block_type": "paragraph",
+        "column_index": 0,
+        "file_type": "pdf",
+        "heading_path": [
+          "2. Upload Flow"
+        ],
+        "page_end": 2,
+        "page_start": 2,
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "section_heading_path": [
+          "2. Upload Flow"
+        ],
+        "section_index": 1,
+        "section_level": 1,
+        "source_parser": "pdf_layout_parser",
+        "splitter": "pdf_layout_paragraph_block"
+      }
+    }
+  ],
+  "chunks": [
+    {
+      "content": "# 1. Review Rules\n\nReviewers must check title, body, tags, and status. Only active records can enter retrieval.",
+      "metadata": {
+        "block_type": "paragraph",
+        "chunk_overlap": 200,
+        "file_type": "pdf",
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "max_chunk_size": 1000,
+        "page_end": 1,
+        "page_start": 1,
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "splitter": "pdf_layout_paragraph_block",
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "# 1. Review Rules\n\n| field | value |\n| --- | --- |\n| status | active |\n| source_type | document |",
+      "metadata": {
+        "block_type": "table",
+        "chunk_overlap": 200,
+        "col_end": "B",
+        "col_start": "A",
+        "column_count": 2,
+        "file_type": "pdf",
+        "has_header": true,
+        "heading_path": [
+          "1. Review Rules"
+        ],
+        "max_chunk_size": 1000,
+        "page_end": 1,
+        "page_start": 1,
+        "paragraph_end": 2,
+        "paragraph_start": 2,
+        "row_count": 2,
+        "row_end": 3,
+        "row_start": 2,
+        "splitter": "pdf_layout_table_block",
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "# 2. Upload Flow\n\nTXT, Markdown, Word, PDF, and Excel can be parsed. Metadata keeps source and page traceability.",
+      "metadata": {
+        "block_type": "paragraph",
+        "chunk_overlap": 200,
+        "file_type": "pdf",
+        "heading_path": [
+          "2. Upload Flow"
+        ],
+        "max_chunk_size": 1000,
+        "page_end": 2,
+        "page_start": 2,
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "splitter": "pdf_layout_paragraph_block",
+        "target_chunk_size": 850
+      }
+    }
+  ]
+}

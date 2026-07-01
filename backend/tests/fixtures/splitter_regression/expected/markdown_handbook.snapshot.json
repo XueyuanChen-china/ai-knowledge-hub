@@ -1,0 +1,711 @@
+{
+  "file_type": "md",
+  "options": {
+    "target_chunk_size": 850,
+    "max_chunk_size": 1000,
+    "chunk_overlap": 200
+  },
+  "elements": [
+    {
+      "element_type": "heading",
+      "level": 1,
+      "metadata": {
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 1,
+        "heading_path": [
+          "员工手册"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      },
+      "source_index": 0,
+      "text": "# 员工手册"
+    },
+    {
+      "element_type": "paragraph",
+      "metadata": {
+        "block_type": "paragraph",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_paragraph_block"
+      },
+      "source_index": 1,
+      "text": "导语：这是知识库切分回归样本。"
+    },
+    {
+      "element_type": "heading",
+      "level": 2,
+      "metadata": {
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 2,
+        "heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      },
+      "source_index": 2,
+      "text": "## 报销流程"
+    },
+    {
+      "element_type": "paragraph",
+      "metadata": {
+        "block_type": "paragraph",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_paragraph_block"
+      },
+      "source_index": 3,
+      "text": "员工提交报销前，需要准备发票、行程单和审批记录。财务会在两个工作日内完成初审。"
+    },
+    {
+      "element_type": "heading",
+      "level": 3,
+      "metadata": {
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 3,
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      },
+      "source_index": 4,
+      "text": "### 提交材料"
+    },
+    {
+      "element_type": "list",
+      "metadata": {
+        "block_type": "list",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_list_block"
+      },
+      "source_index": 5,
+      "text": "- 发票原件\n- 行程单截图\n- 审批通过记录"
+    },
+    {
+      "element_type": "table",
+      "metadata": {
+        "block_type": "table",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_table_block"
+      },
+      "source_index": 6,
+      "text": "| 字段 | 说明 |\n| --- | --- |\n| status | 草稿 |\n| owner | 员工 |"
+    },
+    {
+      "element_type": "code",
+      "metadata": {
+        "block_type": "code",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_code_block"
+      },
+      "source_index": 7,
+      "text": "```python\ndef approve(amount: int) -> bool:\n    return amount < 5000\n```"
+    },
+    {
+      "element_type": "heading",
+      "level": 2,
+      "metadata": {
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 2,
+        "heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      },
+      "source_index": 8,
+      "text": "## 借款规则"
+    },
+    {
+      "element_type": "paragraph",
+      "metadata": {
+        "block_type": "paragraph",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_paragraph_block"
+      },
+      "source_index": 9,
+      "text": "借款申请需要部门负责人和财务负责人双重审批。审批通过后，系统会自动生成借款单号。"
+    }
+  ],
+  "sections": [
+    {
+      "blocks": [
+        {
+          "block_type": "heading",
+          "content": "# 员工手册",
+          "metadata": {
+            "block_type": "heading",
+            "file_type": "md",
+            "heading_level": 1,
+            "heading_path": [
+              "员工手册"
+            ],
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_heading_block"
+          }
+        },
+        {
+          "block_type": "paragraph",
+          "content": "导语：这是知识库切分回归样本。",
+          "metadata": {
+            "block_type": "paragraph",
+            "file_type": "md",
+            "heading_path": [
+              "员工手册"
+            ],
+            "paragraph_end": 1,
+            "paragraph_start": 1,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_paragraph_block"
+          }
+        }
+      ],
+      "heading_path": [
+        "员工手册"
+      ],
+      "level": 1,
+      "metadata": {
+        "file_type": "md",
+        "splitter": "markdown_structure"
+      }
+    },
+    {
+      "blocks": [
+        {
+          "block_type": "heading",
+          "content": "## 报销流程",
+          "metadata": {
+            "block_type": "heading",
+            "file_type": "md",
+            "heading_level": 2,
+            "heading_path": [
+              "员工手册",
+              "报销流程"
+            ],
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_heading_block"
+          }
+        },
+        {
+          "block_type": "paragraph",
+          "content": "员工提交报销前，需要准备发票、行程单和审批记录。财务会在两个工作日内完成初审。",
+          "metadata": {
+            "block_type": "paragraph",
+            "file_type": "md",
+            "heading_path": [
+              "员工手册",
+              "报销流程"
+            ],
+            "paragraph_end": 1,
+            "paragraph_start": 1,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_paragraph_block"
+          }
+        },
+        {
+          "block_type": "heading",
+          "content": "### 提交材料",
+          "metadata": {
+            "block_type": "heading",
+            "file_type": "md",
+            "heading_level": 3,
+            "heading_path": [
+              "员工手册",
+              "报销流程",
+              "提交材料"
+            ],
+            "paragraph_end": 2,
+            "paragraph_start": 2,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_heading_block"
+          }
+        },
+        {
+          "block_type": "list",
+          "content": "- 发票原件\n- 行程单截图\n- 审批通过记录",
+          "metadata": {
+            "block_type": "list",
+            "file_type": "md",
+            "heading_path": [
+              "员工手册",
+              "报销流程",
+              "提交材料"
+            ],
+            "paragraph_end": 3,
+            "paragraph_start": 3,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_list_block"
+          }
+        },
+        {
+          "block_type": "table",
+          "content": "| 字段 | 说明 |\n| --- | --- |\n| status | 草稿 |\n| owner | 员工 |",
+          "metadata": {
+            "block_type": "table",
+            "file_type": "md",
+            "heading_path": [
+              "员工手册",
+              "报销流程",
+              "提交材料"
+            ],
+            "paragraph_end": 4,
+            "paragraph_start": 4,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_table_block"
+          }
+        },
+        {
+          "block_type": "code",
+          "content": "```python\ndef approve(amount: int) -> bool:\n    return amount < 5000\n```",
+          "metadata": {
+            "block_type": "code",
+            "file_type": "md",
+            "heading_path": [
+              "员工手册",
+              "报销流程",
+              "提交材料"
+            ],
+            "paragraph_end": 5,
+            "paragraph_start": 5,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_code_block"
+          }
+        }
+      ],
+      "heading_path": [
+        "员工手册",
+        "报销流程"
+      ],
+      "level": 2,
+      "metadata": {
+        "file_type": "md",
+        "splitter": "markdown_structure"
+      }
+    },
+    {
+      "blocks": [
+        {
+          "block_type": "heading",
+          "content": "## 借款规则",
+          "metadata": {
+            "block_type": "heading",
+            "file_type": "md",
+            "heading_level": 2,
+            "heading_path": [
+              "员工手册",
+              "借款规则"
+            ],
+            "paragraph_end": 0,
+            "paragraph_start": 0,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_heading_block"
+          }
+        },
+        {
+          "block_type": "paragraph",
+          "content": "借款申请需要部门负责人和财务负责人双重审批。审批通过后，系统会自动生成借款单号。",
+          "metadata": {
+            "block_type": "paragraph",
+            "file_type": "md",
+            "heading_path": [
+              "员工手册",
+              "借款规则"
+            ],
+            "paragraph_end": 1,
+            "paragraph_start": 1,
+            "source_parser": "markdown_parser",
+            "splitter": "markdown_paragraph_block"
+          }
+        }
+      ],
+      "heading_path": [
+        "员工手册",
+        "借款规则"
+      ],
+      "level": 2,
+      "metadata": {
+        "file_type": "md",
+        "splitter": "markdown_structure"
+      }
+    }
+  ],
+  "blocks": [
+    {
+      "block_type": "heading",
+      "content": "# 员工手册",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 1,
+        "heading_path": [
+          "员工手册"
+        ],
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "section_heading_path": [
+          "员工手册"
+        ],
+        "section_index": 0,
+        "section_level": 1,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      }
+    },
+    {
+      "block_type": "paragraph",
+      "content": "导语：这是知识库切分回归样本。",
+      "metadata": {
+        "block_index": 1,
+        "block_type": "paragraph",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册"
+        ],
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "section_heading_path": [
+          "员工手册"
+        ],
+        "section_index": 0,
+        "section_level": 1,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_paragraph_block"
+      }
+    },
+    {
+      "block_type": "heading",
+      "content": "## 报销流程",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 2,
+        "heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "section_heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "section_index": 1,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      }
+    },
+    {
+      "block_type": "paragraph",
+      "content": "员工提交报销前，需要准备发票、行程单和审批记录。财务会在两个工作日内完成初审。",
+      "metadata": {
+        "block_index": 1,
+        "block_type": "paragraph",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "section_heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "section_index": 1,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_paragraph_block"
+      }
+    },
+    {
+      "block_type": "heading",
+      "content": "### 提交材料",
+      "metadata": {
+        "block_index": 2,
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 3,
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "paragraph_end": 2,
+        "paragraph_start": 2,
+        "section_heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "section_index": 1,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      }
+    },
+    {
+      "block_type": "list",
+      "content": "- 发票原件\n- 行程单截图\n- 审批通过记录",
+      "metadata": {
+        "block_index": 3,
+        "block_type": "list",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "paragraph_end": 3,
+        "paragraph_start": 3,
+        "section_heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "section_index": 1,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_list_block"
+      }
+    },
+    {
+      "block_type": "table",
+      "content": "| 字段 | 说明 |\n| --- | --- |\n| status | 草稿 |\n| owner | 员工 |",
+      "metadata": {
+        "block_index": 4,
+        "block_type": "table",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "paragraph_end": 4,
+        "paragraph_start": 4,
+        "section_heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "section_index": 1,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_table_block"
+      }
+    },
+    {
+      "block_type": "code",
+      "content": "```python\ndef approve(amount: int) -> bool:\n    return amount < 5000\n```",
+      "metadata": {
+        "block_index": 5,
+        "block_type": "code",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "paragraph_end": 5,
+        "paragraph_start": 5,
+        "section_heading_path": [
+          "员工手册",
+          "报销流程"
+        ],
+        "section_index": 1,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_code_block"
+      }
+    },
+    {
+      "block_type": "heading",
+      "content": "## 借款规则",
+      "metadata": {
+        "block_index": 0,
+        "block_type": "heading",
+        "file_type": "md",
+        "heading_level": 2,
+        "heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "paragraph_end": 0,
+        "paragraph_start": 0,
+        "section_heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "section_index": 2,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_heading_block"
+      }
+    },
+    {
+      "block_type": "paragraph",
+      "content": "借款申请需要部门负责人和财务负责人双重审批。审批通过后，系统会自动生成借款单号。",
+      "metadata": {
+        "block_index": 1,
+        "block_type": "paragraph",
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "section_heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "section_index": 2,
+        "section_level": 2,
+        "source_parser": "markdown_parser",
+        "splitter": "markdown_paragraph_block"
+      }
+    }
+  ],
+  "chunks": [
+    {
+      "content": "# 员工手册\n\n导语：这是知识库切分回归样本。",
+      "metadata": {
+        "block_type": "paragraph",
+        "chunk_overlap": 200,
+        "file_type": "md",
+        "heading_path": [
+          "员工手册"
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "splitter": "markdown_paragraph_block",
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "## 报销流程\n\n员工提交报销前，需要准备发票、行程单和审批记录。财务会在两个工作日内完成初审。\n\n### 提交材料\n\n- 发票原件\n- 行程单截图\n- 审批通过记录",
+      "metadata": {
+        "block_types": [
+          "paragraph",
+          "heading",
+          "list"
+        ],
+        "chunk_overlap": 200,
+        "file_type": "md",
+        "heading_paths": [
+          [
+            "员工手册",
+            "报销流程"
+          ],
+          [
+            "员工手册",
+            "报销流程",
+            "提交材料"
+          ]
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 3,
+        "paragraph_start": 1,
+        "splitter": "markdown_paragraph_block",
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "### 提交材料\n\n| 字段 | 说明 |\n| --- | --- |\n| status | 草稿 |\n| owner | 员工 |",
+      "metadata": {
+        "block_type": "table",
+        "chunk_overlap": 200,
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 4,
+        "paragraph_start": 4,
+        "splitter": "markdown_table_block",
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "### 提交材料\n\n```python\ndef approve(amount: int) -> bool:\n    return amount < 5000\n```",
+      "metadata": {
+        "block_type": "code",
+        "chunk_overlap": 200,
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "报销流程",
+          "提交材料"
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 5,
+        "paragraph_start": 5,
+        "splitter": "markdown_code_block",
+        "target_chunk_size": 850
+      }
+    },
+    {
+      "content": "## 借款规则\n\n借款申请需要部门负责人和财务负责人双重审批。审批通过后，系统会自动生成借款单号。",
+      "metadata": {
+        "block_type": "paragraph",
+        "chunk_overlap": 200,
+        "file_type": "md",
+        "heading_path": [
+          "员工手册",
+          "借款规则"
+        ],
+        "max_chunk_size": 1000,
+        "paragraph_end": 1,
+        "paragraph_start": 1,
+        "splitter": "markdown_paragraph_block",
+        "target_chunk_size": 850
+      }
+    }
+  ]
+}
