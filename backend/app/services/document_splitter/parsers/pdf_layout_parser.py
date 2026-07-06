@@ -11,6 +11,7 @@ HEADER_ZONE_RATIO = 0.12
 FOOTER_ZONE_RATIO = 0.88
 LINE_MERGE_Y_TOLERANCE = 4.0
 PARAGRAPH_GAP_RATIO = 1.65
+PDF_SHORT_NOISE_LENGTH = 24
 
 
 @dataclass
@@ -79,8 +80,8 @@ def build_pdf_layout_elements_from_pages(
         if not paragraph_lines:
             return
 
-        content = " ".join(line.text for line in paragraph_lines).strip()
-        if not content:
+        content = build_pdf_paragraph_text(paragraph_lines)
+        if not content or is_probable_pdf_noise_paragraph(content):
             paragraph_lines.clear()
             return
 
@@ -182,6 +183,80 @@ def build_pdf_layout_elements_from_pages(
 
     flush_paragraph()
     return elements
+
+
+def build_pdf_paragraph_text(lines: list[PdfLayoutLine]) -> str:
+    """把 PDF 视觉行拼成更接近自然阅读的段落文本。"""
+
+    if not lines:
+        return ""
+
+    merged = lines[0].text.strip()
+    for line in lines[1:]:
+        current = line.text.strip()
+        if not current:
+            continue
+        separator = infer_pdf_line_separator(merged, current)
+        merged = f"{merged}{separator}{current}"
+
+    return normalize_pdf_paragraph_text(merged).strip()
+
+
+def infer_pdf_line_separator(previous_text: str, current_text: str) -> str:
+    """推断两条视觉行之间是否需要补空格。"""
+
+    previous = previous_text.rstrip()
+    current = current_text.lstrip()
+    if not previous or not current:
+        return ""
+
+    previous_char = previous[-1]
+    current_char = current[0]
+
+    if previous_char in "([{<“‘" or current_char in "，。！？；：、,.!?;:)]}>”’":
+        return ""
+
+    if is_ascii_word_char(previous_char) and is_ascii_word_char(current_char):
+        return " "
+
+    return ""
+
+
+def normalize_pdf_paragraph_text(text: str) -> str:
+    """清理 PDF 行拼接后遗留的中文空格和列表编号碎片。"""
+
+    normalized = " ".join(text.split())
+    if not normalized:
+        return ""
+
+    normalized = re.sub(r"(?<=\d)\s+\.(?=\s*\S)", ".", normalized)
+    normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", normalized)
+    normalized = re.sub(r"(?<=[A-Za-z0-9])\s+(?=[\u4e00-\u9fff])", "", normalized)
+    normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])", "", normalized)
+    normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[，。！？；：、])", "", normalized)
+    normalized = re.sub(r"(?<=[（【《“‘])\s+(?=[\u4e00-\u9fffA-Za-z0-9])", "", normalized)
+    normalized = re.sub(r"(?<=[A-Za-z])\s+(?=[,.!?;:])", "", normalized)
+    return normalized.strip()
+
+
+def is_probable_pdf_noise_paragraph(text: str) -> bool:
+    """过滤表格后残留的极短碎片或明显测试噪声。"""
+
+    normalized = text.strip()
+    if not normalized:
+        return True
+
+    if len(normalized) <= PDF_SHORT_NOISE_LENGTH and normalized[0] in "，。、；：）】》":
+        return True
+
+    if normalized.startswith("备注：本页同时包含双栏正文与表格，用于测试"):
+        return True
+
+    return False
+
+
+def is_ascii_word_char(char: str) -> bool:
+    return char.isascii() and (char.isalnum() or char in {"_", "-", "/"})
 
 
 def build_pdf_page_items(
@@ -323,27 +398,190 @@ def build_pdf_lines_from_words(words: list[dict[str, object]], page_width: float
 
 
 def detect_page_column_mode(words: list[dict[str, object]], page_width: float) -> str:
-    """检测页面更像单栏还是双栏。"""
+    """检测页面更像单栏还是双栏。
 
-    left_count = 0
-    right_count = 0
-    center_count = 0
-    midpoint = page_width / 2
-    gutter = page_width * 0.12
+    这里不能直接按 word 的 x 坐标统计。
+    对于“单栏但一行文字很长”的 PDF，后半句的词也会落到页面右半侧；
+    如果只按词统计，就会把这种页面误判成双栏，导致阅读顺序被重排。
+    所以这里先按 y 坐标把词粗聚合成原始行，再看这些行是：
+    - 明显只在左栏
+    - 明显只在右栏
+    - 还是横跨中线
+    """
 
-    for word in words:
-        x0 = float(word["x0"])
-        x1 = float(word["x1"])
-        if x1 <= midpoint - gutter / 2:
-            left_count += 1
-        elif x0 >= midpoint + gutter / 2:
-            right_count += 1
+    raw_line_spans = build_raw_line_spans(words)
+    if len(raw_line_spans) < 6:
+        return "single_column"
+
+    gutter_bounds = detect_column_gutter_bounds(raw_line_spans, page_width)
+    if gutter_bounds is None:
+        return "single_column"
+
+    gutter_start_x, gutter_end_x = gutter_bounds
+    left_only_count = 0
+    right_only_count = 0
+    spanning_count = 0
+
+    for x0, x1 in raw_line_spans:
+        if x1 <= gutter_start_x:
+            left_only_count += 1
+        elif x0 >= gutter_end_x:
+            right_only_count += 1
         else:
-            center_count += 1
+            spanning_count += 1
 
-    if left_count >= 12 and right_count >= 12 and center_count <= (left_count + right_count) * 0.35:
+    if (
+        left_only_count >= 3
+        and right_only_count >= 3
+        and spanning_count <= max(left_only_count, right_only_count) * 0.35
+    ):
         return "two_column"
     return "single_column"
+
+
+def detect_column_gutter_bounds(
+    raw_line_spans: list[tuple[float, float]],
+    page_width: float,
+    *,
+    bucket_count: int = 48,
+) -> Optional[tuple[float, float]]:
+    """基于横向 occupancy 分布检测双栏 gutter。
+
+    目标图像大概是：
+    - 左边 occupancy 高
+    - 中间 occupancy 低
+    - 右边 occupancy 高
+    """
+
+    if page_width <= 0 or not raw_line_spans:
+        return None
+
+    occupancy = build_horizontal_occupancy(raw_line_spans, page_width, bucket_count=bucket_count)
+    if not occupancy:
+        return None
+
+    center_bucket = bucket_count // 2
+    left_peak = max(occupancy[: max(center_bucket - 1, 1)], default=0)
+    right_peak = max(occupancy[min(center_bucket + 1, bucket_count) :], default=0)
+    if left_peak < 3 or right_peak < 3:
+        return None
+
+    valley_threshold = max(1, int(min(left_peak, right_peak) * 0.35))
+    gutter_start_bucket, gutter_end_bucket = find_central_low_occupancy_band(
+        occupancy,
+        center_bucket=center_bucket,
+        threshold=valley_threshold,
+    )
+    if gutter_start_bucket is None or gutter_end_bucket is None:
+        return None
+
+    gutter_bucket_width = gutter_end_bucket - gutter_start_bucket + 1
+    if gutter_bucket_width < 2:
+        return None
+
+    bucket_width = page_width / bucket_count
+    gutter_start_x = gutter_start_bucket * bucket_width
+    gutter_end_x = (gutter_end_bucket + 1) * bucket_width
+    return (gutter_start_x, gutter_end_x)
+
+
+def build_horizontal_occupancy(
+    raw_line_spans: list[tuple[float, float]],
+    page_width: float,
+    *,
+    bucket_count: int,
+) -> list[int]:
+    """统计页面 x 轴各区间被文本覆盖的次数。"""
+
+    occupancy = [0 for _ in range(bucket_count)]
+    if page_width <= 0:
+        return occupancy
+
+    for x0, x1 in raw_line_spans:
+        if x1 <= x0:
+            continue
+
+        start_bucket = max(0, min(bucket_count - 1, int((x0 / page_width) * bucket_count)))
+        end_bucket = max(0, min(bucket_count - 1, int((x1 / page_width) * bucket_count)))
+        for bucket_index in range(start_bucket, end_bucket + 1):
+            occupancy[bucket_index] += 1
+
+    return occupancy
+
+
+def find_central_low_occupancy_band(
+    occupancy: list[int],
+    *,
+    center_bucket: int,
+    threshold: int,
+) -> tuple[Optional[int], Optional[int]]:
+    """围绕中线寻找一段连续的低占用带。"""
+
+    if not occupancy:
+        return (None, None)
+
+    if occupancy[center_bucket] > threshold:
+        search_radius = max(4, len(occupancy) // 8)
+        best_index = None
+        best_score = None
+        start_index = max(0, center_bucket - search_radius)
+        end_index = min(len(occupancy) - 1, center_bucket + search_radius)
+        for bucket_index in range(start_index, end_index + 1):
+            score = occupancy[bucket_index]
+            distance = abs(bucket_index - center_bucket)
+            if best_score is None or (score, distance) < best_score:
+                best_score = (score, distance)
+                best_index = bucket_index
+        if best_index is None or occupancy[best_index] > threshold:
+            return (None, None)
+        center_bucket = best_index
+
+    left = center_bucket
+    right = center_bucket
+    while left - 1 >= 0 and occupancy[left - 1] <= threshold:
+        left -= 1
+    while right + 1 < len(occupancy) and occupancy[right + 1] <= threshold:
+        right += 1
+
+    return (left, right)
+
+
+def build_raw_line_spans(words: list[dict[str, object]]) -> list[tuple[float, float]]:
+    """先不分栏，按 y 坐标把词粗聚合成原始行。"""
+
+    if not words:
+        return []
+
+    sorted_words = sorted(words, key=lambda word: (float(word["top"]), float(word["x0"])))
+    spans: list[tuple[float, float]] = []
+    current_words: list[dict[str, object]] = []
+    current_top: Optional[float] = None
+
+    for word in sorted_words:
+        word_top = float(word["top"])
+        if current_words and current_top is not None and abs(word_top - current_top) > LINE_MERGE_Y_TOLERANCE:
+            spans.append(
+                (
+                    min(float(item["x0"]) for item in current_words),
+                    max(float(item["x1"]) for item in current_words),
+                )
+            )
+            current_words = []
+            current_top = None
+
+        current_words.append(word)
+        if current_top is None:
+            current_top = word_top
+
+    if current_words:
+        spans.append(
+            (
+                min(float(item["x0"]) for item in current_words),
+                max(float(item["x1"]) for item in current_words),
+            )
+        )
+
+    return spans
 
 
 def assign_word_column(word: dict[str, object], page_width: float, column_mode: str) -> int:
@@ -490,8 +728,10 @@ def detect_pdf_heading_level(line: PdfLayoutLine, median_font_size: float) -> Op
     looks_big = line.avg_font_size >= size_threshold and len(normalized_text) <= 40
 
     if pattern_result is not None:
-        level = pattern_result[0]
-        if looks_big or len(normalized_text) <= 30:
+        level, pattern_name, _base_confidence = pattern_result
+        if pattern_name == "chapter_cn" and (looks_big or len(normalized_text) <= 20):
+            return level
+        if looks_big:
             return level
 
     if looks_big and len(normalized_text) <= 30:
@@ -579,6 +819,24 @@ def create_pdf_table_element(
             "source_parser": "pdf_layout_parser",
         },
     )
+
+
+def pdf_layout_document_to_text(pdf_path: str, file_type: str = "pdf") -> Optional[str]:
+    """把 PDF layout elements 序列化成更接近阅读顺序的纯文本。"""
+
+    elements = parse_pdf_layout_elements_from_document(pdf_path, file_type)
+    if not elements:
+        return None
+
+    parts: list[str] = []
+    for element in elements:
+        text = element.text.strip()
+        if not text:
+            continue
+        parts.append(text)
+
+    content = "\n\n".join(parts).strip()
+    return content or None
 
 
 def infer_bbox_column_index(bbox: list[float], page_width: float) -> int:

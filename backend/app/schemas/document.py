@@ -25,3 +25,13 @@ class DocumentChunkResponse(SQLModel):
     document_id: int
     knowledge_item_id: int
     chunk_count: int
+
+
+class DocumentIndexResponse(SQLModel):
+    """文档完成切片并写入向量库后的响应。"""
+
+    document_id: int
+    knowledge_item_id: int
+    chunk_count: int
+    vector_count: int
+    index_name: str

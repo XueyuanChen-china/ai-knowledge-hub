@@ -20,9 +20,9 @@ AI Knowledge Hub：企业知识库管理与专家 Agent 平台
 前端：React / Next.js + TypeScript
 后端：FastAPI + LangGraph + LangChain
 数据库：SQLite
-向量库：Chroma
+向量库：Elasticsearch
 模型：千问 API
-Embedding：HuggingFace Embedding
+Embedding：BGE-M3
 ```
 
 核心能力：
@@ -30,7 +30,7 @@ Embedding：HuggingFace Embedding
 ```text
 1. 创建知识库
 2. 上传文档 / 手动录入知识
-3. 文档切分、Embedding、写入 Chroma
+3. 文档切分、Embedding、写入 Elasticsearch
 4. 知识条目管理：增删改查、标签、状态
 5. 语义检索 + 关键词搜索
 6. 专家 Agent 问答
@@ -101,7 +101,7 @@ Redis 队列
 切分 chunk
 生成 metadata
 embedding
-写入 Chroma
+写入 Elasticsearch
 把文档和 chunk 信息写入 SQLite
 ```
 
@@ -359,7 +359,7 @@ metadata_json
 created_at
 ```
 
-表示实际进入 Chroma 的 chunk。
+表示实际进入向量索引的 chunk。当前实现会写入 Elasticsearch。
 
 ---
 
@@ -495,7 +495,7 @@ direct / rag
 负责：
 
 ```text
-根据 question 检索 Chroma
+根据 question 检索 Elasticsearch 向量索引
 拿到 top-k docs
 格式化 context
 生成 docs_preview
@@ -515,7 +515,7 @@ direct / rag
 否则 confident
 ```
 
-如果 Chroma 暂时不好拿 score，可以先用规则：
+如果第一版检索接口暂时不好拿 score，可以先用规则：
 
 ```text
 docs 数量 == 0 → need_review
@@ -946,13 +946,13 @@ chunks 表有记录
 
 ---
 
-## Day 9：Embedding + Chroma 入库
+## Day 9：Embedding + Elasticsearch 入库
 
 任务：
 
 ```text
-接 HuggingFaceEmbeddings
-接 Chroma
+接 BGE-M3
+接 Elasticsearch
 实现 vector_service.add_chunks()
 给每个 chunk 生成稳定 vector_id
 ```
@@ -961,7 +961,7 @@ chunks 表有记录
 
 ```text
 点击 index 后，chunks 写入 SQLite
-向量写入 Chroma
+向量写入 Elasticsearch
 ```
 
 ---
@@ -980,7 +980,7 @@ POST /documents/{id}/index
 读取 document
 切分
 embedding
-写 Chroma
+写 Elasticsearch
 写 chunks
 document status 改成 indexed
 ```
@@ -1128,7 +1128,7 @@ normalize_route
 任务：
 
 ```text
-retrieve_node 接 Chroma
+retrieve_node 接 Elasticsearch
 写入 context
 写入 docs_preview
 写入 citations
@@ -1480,7 +1480,7 @@ extract_knowledge
 AI Knowledge Hub：企业知识库管理与专家 Agent 平台
 
 - 基于 FastAPI + React + TypeScript 构建企业知识库管理平台，支持知识库 CRUD、文档上传、知识条目管理、标签分类、状态管理和语义检索。
-- 基于 LangChain + Chroma 实现 RAG 检索链路，完成文档解析、文本切分、Embedding 入库、Top-K 检索、Context 拼接和基于引用的答案生成。
+- 基于 LangChain + Elasticsearch 实现 RAG 检索链路，完成文档解析、文本切分、Embedding 入库、Top-K 检索、Context 拼接和基于引用的答案生成。
 - 使用 LangGraph 设计可控 Agent Workflow，包含问题路由、RAG 检索、相关性判断、答案生成、会话保存等节点。
 - 实现 Human-in-the-loop 审核机制，在低置信度检索场景下通过 interrupt 暂停工作流，人工确认后使用 Command(resume) 恢复执行。
 - 接入 checkpoint / thread_id 保存图状态，实现多轮会话状态恢复和审核流程延续。

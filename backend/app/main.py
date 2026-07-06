@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.document import router as document_router
 from app.api.knowledge_base import router as knowledge_base_router
 from app.api.knowledge_item import router as knowledge_item_router
+from app.api.search import router as search_router
 from app.config import get_settings
 from app.db.database import create_db_and_tables
 
@@ -25,13 +26,17 @@ app.include_router(knowledge_item_router)
 # 注册后，Swagger 里会出现 /documents 文件上传接口。
 app.include_router(document_router)
 
+# 注册搜索路由。
+# 注册后，Swagger 里会出现 /search/semantic 等检索接口。
+app.include_router(search_router)
+
 
 @app.on_event("startup")
 def on_startup() -> None:
     """应用启动时执行的初始化逻辑。
 
     当前只做一件事：根据 SQLModel 模型创建 SQLite 数据表。
-    后续如果要初始化 Chroma、加载模型配置，也可以放在这里或拆到独立模块。
+    后续如果要做 Elasticsearch 连通性检查、预热 Embedding 模型，也可以放在这里或拆到独立模块。
     """
 
     create_db_and_tables()

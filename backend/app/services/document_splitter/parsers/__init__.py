@@ -12,6 +12,7 @@ from app.services.document_splitter.parsers.excel_parser import (
 from app.services.document_splitter.parsers.markdown_parser import parse_markdown_elements
 from app.services.document_splitter.parsers.pdf_layout_parser import (
     parse_pdf_layout_elements_from_document,
+    pdf_layout_document_to_text,
 )
 from app.services.document_splitter.parsers.plain_text_parser import (
     detect_plain_text_headings,
@@ -27,6 +28,7 @@ __all__ = [
     "parse_excel_elements_from_workbook",
     "parse_markdown_elements",
     "parse_pdf_layout_elements_from_document",
+    "pdf_layout_document_to_text",
     "parse_plain_text_elements",
     "parse_plain_text_elements_from_pages",
     "workbook_to_text",

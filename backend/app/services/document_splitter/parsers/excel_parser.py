@@ -120,8 +120,8 @@ def workbook_to_text(workbook_path: str) -> str:
                 continue
 
             parts.append(f"Sheet: {worksheet.title}")
-            for row in rows:
-                parts.append("\t".join(row).rstrip())
+            for _, row_values in rows:
+                parts.append("\t".join(row_values).rstrip())
             parts.append("")
     finally:
         workbook.close()

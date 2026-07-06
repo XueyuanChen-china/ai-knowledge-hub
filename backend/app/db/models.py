@@ -173,7 +173,8 @@ class Chunk(SQLModel, table=True):
     # chunk 的正文内容。
     content: str
 
-    # 向量库里的 ID，例如 Chroma 返回的 id。
+    # 向量索引里的稳定 ID。
+    # 当前会同步写入 SQLite 和 Elasticsearch，用它把两边的数据关联起来。
     vector_id: Optional[str] = Field(default=None, index=True, max_length=255)
 
     # 元数据 JSON 字符串，例如页码、来源、标签等。

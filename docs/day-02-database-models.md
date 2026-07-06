@@ -275,7 +275,7 @@ document_id 可选
 
 ```text
 SQLite 负责存业务数据
-Chroma 负责存向量数据
+向量库负责存向量数据（当前实现是 Elasticsearch）
 vector_id 负责把两边关联起来
 ```
 

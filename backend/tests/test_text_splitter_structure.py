@@ -17,8 +17,15 @@ from app.services.text_splitter import (
     split_pdf_sections,
     split_plain_text_sections,
 )
+from app.api.document import extract_text_from_file
 from app.services.document_splitter.splitter import split_document_text as split_document_text_pipeline
 from app.services.document_splitter.splitter import build_document_sections, parse_splitter_source
+from app.services.document_splitter.parsers.pdf_layout_parser import (
+    PdfLayoutLine,
+    build_pdf_paragraph_text,
+    is_probable_pdf_noise_paragraph,
+    pdf_layout_document_to_text,
+)
 
 
 class TextSplitterStructureTests(unittest.TestCase):
@@ -585,6 +592,25 @@ B内容。
             ],
         )
 
+    def test_plain_text_cn_enum_headings_do_not_form_false_parent_child_chain(self) -> None:
+        text = """一、适用范围
+
+这里是适用范围内容。
+
+二、审批要求
+
+这里是审批要求内容。
+"""
+
+        source = parse_splitter_source(text, "txt")
+        elements = source.elements or []
+        heading_elements = [element for element in elements if element.element_type == "heading"]
+
+        self.assertEqual(
+            [element.metadata.get("heading_path") for element in heading_elements],
+            [["一、适用范围"], ["二、审批要求"]],
+        )
+
     def test_plain_text_outline_without_body_falls_back_to_paragraphs(self) -> None:
         text = """第一章 总则
 
@@ -732,6 +758,170 @@ B内容。
         table_chunks = [chunk for chunk in chunks if chunk.metadata.get("block_type") == "table"]
         self.assertTrue(all("| field | value |" in chunk.content for chunk in table_chunks))
         self.assertTrue(any(chunk.metadata.get("page_start") == 2 for chunk in table_chunks))
+
+    def test_pdf_layout_does_not_misclassify_single_column_long_lines_as_two_columns(self) -> None:
+        def build_pdf(pdf_canvas):
+            pdf_canvas.setFont("Helvetica-Bold", 16)
+            pdf_canvas.drawString(72, 740, "Procurement Supplier Policy")
+
+            pdf_canvas.setFont("Helvetica", 11)
+            pdf_canvas.drawString(
+                72,
+                710,
+                "Purpose and scope this policy defines procurement intake supplier review contract approval delivery checks and payment controls across internal teams and external vendors.",
+            )
+            pdf_canvas.drawString(
+                72,
+                690,
+                "Workflow summary business owners submit a request procurement compares options legal reviews terms security validates access design and finance confirms payment rules before approval.",
+            )
+            pdf_canvas.drawString(
+                72,
+                670,
+                "Check items summary 1. business license and delivery cases are complete.",
+            )
+            pdf_canvas.drawString(
+                72,
+                650,
+                "2. access control logging and vulnerability SLA pass security review.",
+            )
+            pdf_canvas.drawString(
+                72,
+                630,
+                "3. confidentiality clauses and subcontracting limits are explicit in contract.",
+            )
+            pdf_canvas.drawString(
+                72,
+                610,
+                "4. on call support escalation process and project staffing cover key scenarios.",
+            )
+            pdf_canvas.drawString(
+                72,
+                590,
+                "Risk note vendors that cannot explain permission management or refuse breach responsibility should be treated as high risk.",
+            )
+
+        for pdf_path in self.create_temp_pdf(build_pdf):
+            source = parse_splitter_source("", "pdf", pdf_path=str(pdf_path))
+
+        elements = source.elements or []
+        heading_elements = [element for element in elements if element.element_type == "heading"]
+        paragraph_elements = [element for element in elements if element.element_type == "paragraph"]
+
+        self.assertEqual(len(heading_elements), 1)
+        self.assertEqual(heading_elements[0].text, "Procurement Supplier Policy")
+        self.assertTrue(paragraph_elements)
+        self.assertTrue(all(element.metadata.get("column_index") == 0 for element in elements))
+        self.assertTrue(all(not element.text.startswith("2.") for element in heading_elements))
+        combined_text = " ".join(element.text for element in paragraph_elements)
+        self.assertIn("Purpose and scope", combined_text)
+        self.assertIn("Workflow summary", combined_text)
+        self.assertIn("Risk note", combined_text)
+
+    def test_pdf_layout_does_not_treat_numbered_list_items_as_headings(self) -> None:
+        def build_pdf(pdf_canvas):
+            pdf_canvas.setFont("Helvetica-Bold", 16)
+            pdf_canvas.drawString(72, 740, "Review Checklist")
+            pdf_canvas.setFont("Helvetica", 11)
+            pdf_canvas.drawString(72, 710, "1. Confirm project background and owner.")
+            pdf_canvas.drawString(72, 690, "2. Confirm approval chain and budget source.")
+            pdf_canvas.drawString(72, 670, "3. Confirm security and legal review status.")
+            pdf_canvas.drawString(72, 650, "4. Confirm rollback plan and notification list.")
+
+        for pdf_path in self.create_temp_pdf(build_pdf):
+            chunks = split_document_text_pipeline(
+                "",
+                "pdf",
+                target_chunk_size=200,
+                max_chunk_size=260,
+                chunk_overlap=40,
+                pdf_path=str(pdf_path),
+            )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].metadata.get("heading_path"), ["Review Checklist"])
+        self.assertNotIn("# 2. Confirm approval chain", chunks[0].content)
+        self.assertIn("2. Confirm approval chain and budget source.", chunks[0].content)
+
+    def test_pdf_layout_document_to_text_preserves_reading_order(self) -> None:
+        def build_pdf(pdf_canvas):
+            pdf_canvas.setFont("Helvetica-Bold", 16)
+            pdf_canvas.drawString(72, 740, "Procurement Supplier Policy")
+            pdf_canvas.setFont("Helvetica", 11)
+            pdf_canvas.drawString(
+                72,
+                710,
+                "Purpose and scope define intake review approval and payment control.",
+            )
+            pdf_canvas.drawString(
+                72,
+                690,
+                "Workflow summary business submits request procurement compares options.",
+            )
+            pdf_canvas.drawString(
+                72,
+                670,
+                "Risk note vendors without permission model should be treated as high risk.",
+            )
+
+        for pdf_path in self.create_temp_pdf(build_pdf):
+            text = pdf_layout_document_to_text(str(pdf_path))
+
+        self.assertIsNotNone(text)
+        self.assertIn("Procurement Supplier Policy", text)
+        self.assertLess(
+            text.index("Purpose and scope"),
+            text.index("Workflow summary"),
+        )
+        self.assertLess(
+            text.index("Workflow summary"),
+            text.index("Risk note"),
+        )
+
+    def test_extract_text_from_file_uses_layout_aware_pdf_text_when_available(self) -> None:
+        def build_pdf(pdf_canvas):
+            pdf_canvas.setFont("Helvetica-Bold", 16)
+            pdf_canvas.drawString(72, 740, "Review Checklist")
+            pdf_canvas.setFont("Helvetica", 11)
+            pdf_canvas.drawString(72, 710, "1. Confirm project background and owner.")
+            pdf_canvas.drawString(72, 690, "2. Confirm approval chain and budget source.")
+            pdf_canvas.drawString(72, 670, "3. Confirm security and legal review status.")
+
+        for pdf_path in self.create_temp_pdf(build_pdf):
+            text = extract_text_from_file(pdf_path, ".pdf")
+
+        self.assertIn("Review Checklist", text)
+        self.assertIn("1. Confirm project background and owner.", text)
+        self.assertIn("2. Confirm approval chain and budget source.", text)
+        self.assertIn("3. Confirm security and legal review status.", text)
+
+    def test_build_pdf_paragraph_text_normalizes_visual_line_spaces(self) -> None:
+        lines = [
+            PdfLayoutLine(
+                text="本制度用于规范采购申请、合同签署 、到货验收流程。",
+                page_number=1,
+                bbox=[72, 100, 300, 112],
+                avg_font_size=10,
+                column_index=0,
+            ),
+            PdfLayoutLine(
+                text="IT 设 备采购和供应 商管理需要同步留痕。 2 . 权限模型应复核。",
+                page_number=1,
+                bbox=[72, 116, 300, 128],
+                avg_font_size=10,
+                column_index=0,
+            ),
+        ]
+
+        text = build_pdf_paragraph_text(lines)
+
+        self.assertIn("合同签署、到货验收流程。", text)
+        self.assertIn("IT设备采购和供应商管理需要同步留痕。", text)
+        self.assertIn("2. 权限模型应复核。", text)
+
+    def test_pdf_noise_paragraph_detects_short_fragment(self) -> None:
+        self.assertTrue(is_probable_pdf_noise_paragraph("、表格识别与页脚去噪。"))
+        self.assertFalse(is_probable_pdf_noise_paragraph("审批记录需要保留申请人、审批链和附件。"))
 
     def test_markdown_chunks_keep_heading_prefix_and_do_not_cross_heading(self) -> None:
         markdown_text = """# 第一章
