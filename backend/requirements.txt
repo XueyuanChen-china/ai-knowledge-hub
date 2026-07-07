@@ -13,3 +13,4 @@ transformers==4.46.3
 huggingface-hub==0.26.2
 tokenizers==0.20.3
 elasticsearch==8.16.0
+langgraph==0.6.11

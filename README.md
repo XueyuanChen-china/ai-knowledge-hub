@@ -29,6 +29,7 @@ Word 解析：python-docx
 Excel 解析：openpyxl
 向量检索：Elasticsearch dense_vector
 Embedding：BAAI/bge-m3
+工作流：LangGraph
 ```
 
 ## 已完成功能
@@ -120,6 +121,58 @@ Embedding：BAAI/bge-m3
 - 准备多格式测试样例
 - 收口第二周最小知识检索闭环
 
+### Day 15：GraphState + 基础图
+
+- 新增 `graph/state.py`
+- 新增 `graph/nodes.py`
+- 新增 `graph/workflow.py`
+- 实现 `START -> router -> direct/rag`
+- direct 问题不走知识库检索
+- rag 问题进入 retrieve
+
+### Day 16：LLM Router
+
+- `router_node` 先调用 LLM Router
+- 支持输出 `direct / rag / complex`
+- 增加 `normalize_route`
+- LLM 失败时自动走规则兜底
+
+### Day 17：Retrieve Node
+
+- `retrieve_node` 接 Elasticsearch 检索
+- 写回 `retrieved_docs / context / docs_preview / citations`
+- 增加 `retrieval_hit_count`
+- `rag` 问题可直接打印检索结果预览
+
+### Day 18：Answer Node
+
+- `answer_node` 基于 `context` 调用千问生成答案
+- 返回 `answer + citations`
+- 引用通过 `used_context_numbers -> doc/chunk` 映射生成
+- LLM 失败时回退到本地抽取式答案
+
+### Day 19：Relevance Check Node
+
+- 新增 `relevance_check_node`
+- 判断 `docs` 是否为空
+- 判断 `top score` 是否低于阈值
+- 结果不足时不直接进 `answer_node`
+
+### Day 20：Checkpoint + Interrupt
+
+- 使用 `InMemorySaver`
+- `thread_id` 接到 LangGraph checkpoint
+- 新增 `human_review_node` + `interrupt`
+- 新增 `POST /api/chat` 和 `POST /api/review/resume`
+- 支持 `Command(resume)` 恢复执行
+
+### Day 21：Chat API 接入 Graph
+
+- `POST /api/chat` 调用 graph
+- 正常结束返回 `answer`
+- interrupt 时返回 `review_payload`
+- `POST /api/review/resume` 恢复图执行
+
 ## 当前主链路
 
 现在项目已经具备这样一条后端主链路：
@@ -132,7 +185,12 @@ Embedding：BAAI/bge-m3
   -> 生成 embedding
   -> 写入 Elasticsearch
   -> 语义搜索召回
-  -> RAG Service 组装上下文与答案
+  -> Router
+  -> Retrieve Node
+  -> Relevance Check Node
+  -> Interrupt / Resume
+  -> Answer Node / Review
+  -> 返回 answer + citations 或 review result
 ```
 
 ## 项目结构
@@ -144,13 +202,19 @@ ai-knowledge-hub/
       main.py
       config.py
       api/
+        chat.py
         document.py
         knowledge_base.py
         knowledge_item.py
+      graph/
+        state.py
+        nodes.py
+        workflow.py
       db/
         database.py
         models.py
       schemas/
+        chat.py
         chunk.py
         document.py
         knowledge_base.py
@@ -175,6 +239,13 @@ ai-knowledge-hub/
     day-11-semantic-search.md
     day-13-rag-service.md
     day-14-rag-workflow.md
+    day-15-graph-workflow.md
+    day-16-llm-router.md
+    day-17-retrieve-node.md
+    day-18-answer-node.md
+    day-19-relevance-check-node.md
+    day-20-checkpoint-interrupt.md
+    day-21-chat-api-graph.md
   README.md
 ```
 
@@ -328,3 +399,4 @@ python scripts/generate_sample_index_files.py
 - [Day 11：语义搜索 API](docs/day-11-semantic-search.md)
 - [Day 13：RAG Service](docs/day-13-rag-service.md)
 - [Day 14：RAG 流程整理](docs/day-14-rag-workflow.md)
+- [Day 15：GraphState + 基础图](docs/day-15-graph-workflow.md)

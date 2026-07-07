@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.chat import router as chat_router
 from app.api.document import router as document_router
 from app.api.knowledge_base import router as knowledge_base_router
 from app.api.knowledge_item import router as knowledge_item_router
@@ -29,6 +30,10 @@ app.include_router(document_router)
 # 注册搜索路由。
 # 注册后，Swagger 里会出现 /search/semantic 等检索接口。
 app.include_router(search_router)
+
+# 注册基于 LangGraph 的对话路由。
+# 注册后，Swagger 里会出现 /api/chat 和 /api/review/resume。
+app.include_router(chat_router)
 
 
 @app.on_event("startup")

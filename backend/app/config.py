@@ -1,6 +1,10 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+ENV_FILE = BASE_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -59,9 +63,38 @@ class Settings(BaseSettings):
     # 一次 embedding 的批大小。
     embedding_batch_size: int = 16
 
+    # LLM Router 的 OpenAI 兼容 Base URL。
+    # 例如 DashScope / Model Studio 的 compatible-mode/v1 地址。
+    llm_router_base_url: str = ""
+
+    # LLM Router 使用的 API Key。
+    llm_router_api_key: str = ""
+
+    # LLM Router 使用的模型名。
+    llm_router_model: str = ""
+
+    # Router 请求超时时间，单位秒。
+    llm_router_timeout_seconds: int = 20
+
+    # Answer Node 的 OpenAI 兼容 Base URL。为空时回退到 Router 配置。
+    llm_answer_base_url: str = ""
+
+    # Answer Node 使用的 API Key。为空时回退到 Router 配置。
+    llm_answer_api_key: str = ""
+
+    # Answer Node 使用的模型名。为空时回退到 Router 配置。
+    llm_answer_model: str = ""
+
+    # Answer Node 请求超时时间，单位秒。
+    llm_answer_timeout_seconds: int = 40
+
+    # Relevance Check 的低分阈值。
+    # 如果 top score 低于这个值，就先不直接编答案，而是标记 need_human_review。
+    relevance_low_score_threshold: float = 0.35
+
     # 告诉 pydantic-settings 从 backend/.env 文件读取配置。
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
         # .env 里如果临时多写了其他字段，不让程序直接报错。
         extra="ignore",
