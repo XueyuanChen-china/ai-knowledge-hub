@@ -20,9 +20,13 @@ class Settings(BaseSettings):
     # 当前运行环境：development / testing / production。
     app_env: str = "development"
 
-    # SQLite 数据库连接地址。
-    # sqlite:///./data/sqlite/ai_knowledge_hub.db 表示数据库文件在 backend/data/sqlite/ 目录下。
-    database_url: str = "sqlite:///./data/sqlite/ai_knowledge_hub.db"
+    # 允许跨域访问的前端来源，多个值用逗号分隔。
+    # 例如：http://localhost:3000,http://127.0.0.1:3000
+    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # 数据库连接地址。
+    # 当前项目统一使用 PostgreSQL，不再保留 SQLite 运行时支持。
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ai_knowledge_hub"
 
     # Elasticsearch 连接地址。默认先按本地开发的单节点服务处理。
     elasticsearch_url: str = "http://localhost:9200"
@@ -90,7 +94,7 @@ class Settings(BaseSettings):
 
     # Relevance Check 的低分阈值。
     # 如果 top score 低于这个值，就先不直接编答案，而是标记 need_human_review。
-    relevance_low_score_threshold: float = 0.35
+    relevance_low_score_threshold: float = 0.78
 
     # 告诉 pydantic-settings 从 backend/.env 文件读取配置。
     model_config = SettingsConfigDict(
@@ -109,3 +113,14 @@ def get_settings() -> Settings:
     """
 
     return Settings()
+
+
+def get_cors_allow_origins() -> list[str]:
+    """把逗号分隔的 CORS origins 配置解析成列表。"""
+
+    settings = get_settings()
+    return [
+        origin.strip()
+        for origin in settings.cors_allow_origins.split(",")
+        if origin.strip()
+    ]

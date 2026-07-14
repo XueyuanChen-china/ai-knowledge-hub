@@ -9,17 +9,18 @@
 知识条目 CRUD
 本地文档上传
 PDF 文本提取
-SQLite 数据持久化
+数据库持久化
 文档混合切分
 文档索引与语义搜索
 RAG Service 最小闭环
+前端工作台骨架
 ```
 
 ## 技术栈
 
 ```text
 后端：FastAPI
-数据库：SQLite
+数据库：PostgreSQL
 ORM：SQLModel / SQLAlchemy
 配置：pydantic-settings / .env
 文件上传：python-multipart
@@ -30,6 +31,7 @@ Excel 解析：openpyxl
 向量检索：Elasticsearch dense_vector
 Embedding：BAAI/bge-m3
 工作流：LangGraph
+前端：React + Vite + TypeScript + Mantine
 ```
 
 ## 已完成功能
@@ -38,7 +40,7 @@ Embedding：BAAI/bge-m3
 
 - FastAPI 应用入口
 - `.env` 配置读取
-- SQLite 数据库配置
+- 数据库配置
 - SQLModel 初始化
 - 健康检查接口 `GET /health`
 
@@ -173,6 +175,83 @@ Embedding：BAAI/bge-m3
 - interrupt 时返回 `review_payload`
 - `POST /api/review/resume` 恢复图执行
 
+### Day 22：PostgreSQL 标准化
+
+- 数据库运行时统一切到 PostgreSQL
+- 新增本地 PostgreSQL Docker 启动文件
+- 完成历史 SQLite 数据迁移
+- 后端测试统一切到 PostgreSQL
+
+### Day 23：前端初始化
+
+- 新增 `frontend`
+- 使用 `React + Vite + TypeScript + Mantine`
+- 配置路由和统一工作台布局
+- 配置 API client 并接入首页、知识库页、对话工作台
+
+### Day 24：知识库列表页
+
+- 知识库列表页增加创建弹窗
+- 支持删除知识库
+- 支持进入详情页
+- 详情页支持编辑知识库
+
+### Day 25：文档上传和索引页
+
+- 新增前端文档上传与索引页 `/documents`
+- 支持按知识库筛选文档列表
+- 支持上传 `.txt / .md / .pdf / .docx / .xlsx`
+- 支持手动触发 `POST /documents/{id}/index`
+- 前端展示 `uploaded / indexed / failed` 状态
+- 后端补充 `GET /documents` 列表接口
+
+### Day 25-X：知识条目管理与 Chunk 可视化
+
+- 知识库详情页增加知识条目列表和手动创建入口
+- 支持知识条目编辑 / 删除
+- 新增知识条目详情页
+- 前端展示知识条目对应的 chunks 和 metadata
+- 验证 `GET /knowledge-items/{id}/chunks` 链路
+
+### Day 25-Y：手动知识条目切分与索引
+
+- 新增 `POST /knowledge-items/{id}/chunks`
+- 新增 `POST /knowledge-items/{id}/index`
+- 手动知识条目可生成 chunks
+- 手动知识条目可写入 Elasticsearch 向量索引
+- 知识条目详情页增加“生成 Chunks / 构建索引”按钮
+
+### Day 26：语义搜索页面
+
+- 新增前端语义搜索页 `/search`
+- 支持选择知识库、输入 query、设置 `top_k`
+- 展示 `doc_id / chunk_id / title / content_preview / score`
+- 补充高频 metadata 展示，方便判断结果来源
+
+### Day 27：专家 Agent 问答页
+
+- `/chat` 升级为专家问答页
+- 支持聊天窗口展示用户消息和 Agent 回答
+- 展示引用来源和会话状态
+- interrupted 时展示审核面板
+- 支持前端调用 `/api/review/resume` 完成通过 / 拒绝
+
+### Day 28：前端迁移到 Vite
+
+- 前端从 `Next.js` 迁移到 `React + Vite`
+- 保留现有页面、API client 和 Mantine UI 能力
+- 使用 `React Router` 管理路由
+- 增加 `next/link` / `next/navigation` 兼容层，降低迁移改动面
+- 统一环境变量为 `VITE_API_BASE_URL`
+
+### Day 29：会话持久化 Phase 1
+
+- 新增 `GET /api/conversations`
+- 新增 `GET /api/conversations/{id}/messages`
+- 专家问答页增加左侧会话列表
+- 支持点击历史会话回显消息
+- 支持在历史会话上继续追问
+
 ## 当前主链路
 
 现在项目已经具备这样一条后端主链路：
@@ -181,7 +260,7 @@ Embedding：BAAI/bge-m3
 上传文档
   -> 提取文本
   -> 切分 chunks
-  -> 写入 SQLite
+  -> 写入数据库
   -> 生成 embedding
   -> 写入 Elasticsearch
   -> 语义搜索召回
@@ -223,9 +302,16 @@ ai-knowledge-hub/
         text_splitter.py
     data/
       uploads/
-      sqlite/
+    docker-compose.postgres.yml
     .env.example
     requirements.txt
+  frontend/
+    app/
+      documents/
+    components/
+    lib/
+    .env.example
+    package.json
   docs/
     api.md
     day-01-backend-foundation.md
@@ -246,6 +332,16 @@ ai-knowledge-hub/
     day-19-relevance-check-node.md
     day-20-checkpoint-interrupt.md
     day-21-chat-api-graph.md
+    day-22-postgresql-migration.md
+    day-23-frontend-initialization.md
+    day-24-knowledge-base-page.md
+    day-25-document-upload-index-page.md
+    day-25x-knowledge-item-management.md
+    day-25y-manual-knowledge-item-indexing.md
+    improvements/
+      README.md
+      router-upgrade-roadmap.md
+      retrieval-quality-improvements.md
   README.md
 ```
 
@@ -284,7 +380,13 @@ docker run -d \
   -p 9200:9200 \
   -e discovery.type=single-node \
   -e xpack.security.enabled=false \
-  docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+```
+
+先启动本地 PostgreSQL：
+
+```bash
+bash scripts/start_postgres_local.sh
 ```
 
 启动服务：
@@ -297,6 +399,21 @@ uvicorn app.main:app --reload
 
 ```text
 http://127.0.0.1:8000/docs
+```
+
+启动前端：
+
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+打开前端首页：
+
+```text
+http://127.0.0.1:3000
 ```
 
 健康检查：
@@ -319,13 +436,11 @@ curl http://localhost:9200
 
 ## 数据库
 
-SQLite 文件位置：
+当前项目默认数据库就是 PostgreSQL，连接串在 `backend/.env`：
 
-```text
-backend/data/sqlite/ai_knowledge_hub.db
+```env
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/ai_knowledge_hub
 ```
-
-可以用 DB Browser for SQLite 打开查看。
 
 开发早期使用：
 
@@ -366,7 +481,7 @@ python scripts/generate_sample_index_files.py
 
 - 文本提取是否合理
 - chunk 切分是否保住标题/表格/列表
-- `/documents/{id}/index` 是否成功写入 SQLite 和 Elasticsearch
+- `/documents/{id}/index` 是否成功写入数据库和 Elasticsearch
 - `/search/semantic` 是否能召回相关 chunk
 
 ## 推荐验收顺序
@@ -400,3 +515,19 @@ python scripts/generate_sample_index_files.py
 - [Day 13：RAG Service](docs/day-13-rag-service.md)
 - [Day 14：RAG 流程整理](docs/day-14-rag-workflow.md)
 - [Day 15：GraphState + 基础图](docs/day-15-graph-workflow.md)
+- [Day 16：LLM Router](docs/day-16-llm-router.md)
+- [Day 17：Retrieve Node](docs/day-17-retrieve-node.md)
+- [Day 18：Answer Node](docs/day-18-answer-node.md)
+- [Day 19：Relevance Check Node](docs/day-19-relevance-check-node.md)
+- [Day 20：Checkpoint + Interrupt](docs/day-20-checkpoint-interrupt.md)
+- [Day 21：Chat API 接入 Graph](docs/day-21-chat-api-graph.md)
+- [Day 22：PostgreSQL 标准化](docs/day-22-postgresql-migration.md)
+- [Day 23：前端初始化](docs/day-23-frontend-initialization.md)
+- [Day 24：知识库列表页](docs/day-24-knowledge-base-page.md)
+- [Day 25：文档上传和索引页](docs/day-25-document-upload-index-page.md)
+- [Day 25-X：知识条目管理与 Chunk 可视化](docs/day-25x-knowledge-item-management.md)
+- [Day 25-Y：手动知识条目切分与索引](docs/day-25y-manual-knowledge-item-indexing.md)
+- [Day 26：语义搜索页面](docs/day-26-semantic-search-page.md)
+- [Day 27：专家 Agent 问答页](docs/day-27-expert-agent-chat-page.md)
+- [Day 28：前端迁移到 Vite](docs/day-28-vite-migration.md)
+- [Day 29：会话持久化 Phase 1](docs/day-29-conversation-history-phase1.md)

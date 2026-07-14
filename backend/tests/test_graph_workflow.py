@@ -2,11 +2,14 @@ import sys
 import unittest
 from pathlib import Path
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
 from app.db.models import KnowledgeBase
 from app.graph import nodes
@@ -14,16 +17,14 @@ from app.graph.workflow import build_basic_workflow
 from app.services import rag_service
 from app.services.llm_router_service import RouterDecision
 from app.services.rag_service import RetrievedDocument
+from postgres_test_utils import PostgresTestDatabase
 
 
 class GraphWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
-        engine = create_engine(
-            "sqlite://",
-            connect_args={"check_same_thread": False},
-        )
-        SQLModel.metadata.create_all(engine)
-        self.session = Session(engine)
+        self.test_database = PostgresTestDatabase()
+        self.engine = self.test_database.create_engine()
+        self.session = Session(self.engine)
 
         knowledge_base = KnowledgeBase(name="制度库", description="用于图工作流测试")
         self.session.add(knowledge_base)
@@ -33,6 +34,7 @@ class GraphWorkflowTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.session.close()
+        self.test_database.dispose()
 
     def test_direct_question_does_not_trigger_retrieve(self) -> None:
         workflow = build_basic_workflow()
@@ -299,6 +301,81 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertEqual(state["relevance_decision"], "need_review")
         self.assertIn("below threshold", state["review_reason"])
         self.assertIn("relevance_check", state["node_trace"])
+
+    def test_relevance_check_marks_need_review_when_docs_do_not_cover_key_terms(self) -> None:
+        state = nodes.relevance_check_node(
+            {
+                "question": "公司食堂夜班补贴标准是多少？",
+                "retrieved_docs": [
+                    RetrievedDocument(
+                        doc_id=10,
+                        chunk_id=20,
+                        knowledge_item_id=30,
+                        title="采购制度",
+                        content="单次采购金额超过二十万元，需要采购委员会复核。",
+                        score=0.91,
+                        metadata={"heading_path": ["采购制度", "采购复核"]},
+                    )
+                ],
+                "retrieval_hit_count": 1,
+                "relevance_score": 0.91,
+                "node_trace": ["START", "router", "retrieve"],
+            }
+        )
+
+        self.assertTrue(state["need_human_review"])
+        self.assertEqual(state["relevance_decision"], "need_review")
+        self.assertEqual(
+            state["review_reason"],
+            "retrieved docs do not cover key query terms",
+        )
+        self.assertIn("relevance_check", state["node_trace"])
+
+    def test_workflow_does_not_answer_when_docs_do_not_cover_key_terms(self) -> None:
+        workflow = build_basic_workflow(retrieve_top_k=3)
+
+        original_retrieve = nodes.rag_service.retrieve
+        original_llm_route = nodes.llm_router_service.route_question_with_llm
+        original_answer_generate = nodes.llm_answer_service.generate_answer
+        try:
+            nodes.rag_service.retrieve = lambda *args, **kwargs: [
+                RetrievedDocument(
+                    doc_id=10,
+                    chunk_id=20,
+                    knowledge_item_id=30,
+                    title="采购制度",
+                    content="单次采购金额超过二十万元，需要采购委员会复核。",
+                    score=0.91,
+                    metadata={"heading_path": ["采购制度", "采购复核"]},
+                )
+            ]
+            nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
+
+            def fail_answer(*args, **kwargs):
+                raise AssertionError("unsupported retrieval should not call answer node")
+
+            nodes.llm_answer_service.generate_answer = fail_answer
+
+            state = workflow.invoke(
+                {
+                    "question": "公司食堂夜班补贴标准是多少？",
+                    "knowledge_base_id": self.knowledge_base.id,
+                },
+                session=self.session,
+            )
+        finally:
+            nodes.rag_service.retrieve = original_retrieve
+            nodes.llm_router_service.route_question_with_llm = original_llm_route
+            nodes.llm_answer_service.generate_answer = original_answer_generate
+
+        self.assertTrue(state["need_human_review"])
+        self.assertEqual(state["relevance_decision"], "need_review")
+        self.assertEqual(
+            state["review_reason"],
+            "retrieved docs do not cover key query terms",
+        )
+        self.assertEqual(state["answer"], "当前检索结果不足以支持直接回答，需要人工复核。")
+        self.assertNotIn("answer", state["node_trace"])
 
     def test_workflow_does_not_answer_when_retrieval_is_empty(self) -> None:
         workflow = build_basic_workflow(retrieve_top_k=3)

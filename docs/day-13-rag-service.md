@@ -53,7 +53,7 @@ question
 question
   -> search_similar_chunks()
   -> Elasticsearch 返回命中的 chunk
-  -> 根据 knowledge_item_id 去 SQLite 补 title
+  -> 根据 knowledge_item_id 去 PostgreSQL 补 title
   -> 返回 RetrievedDocument[]
 ```
 

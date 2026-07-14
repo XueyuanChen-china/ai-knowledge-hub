@@ -43,3 +43,19 @@ class KnowledgeItemRead(SQLModel):
     source_document_id: Optional[int]
     created_at: datetime
     updated_at: datetime
+
+
+class KnowledgeItemChunkResponse(SQLModel):
+    """知识条目切分后的响应。"""
+
+    knowledge_item_id: int
+    chunk_count: int
+
+
+class KnowledgeItemIndexResponse(SQLModel):
+    """知识条目完成切片并写入向量库后的响应。"""
+
+    knowledge_item_id: int
+    chunk_count: int
+    vector_count: int
+    index_name: str

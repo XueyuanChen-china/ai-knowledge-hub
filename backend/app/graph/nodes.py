@@ -39,6 +39,31 @@ COMPLEX_PATTERNS = (
     r"^(请)?总结这个知识库的重点",
 )
 
+GENERIC_QUERY_TERMS = {
+    "什么",
+    "什么是",
+    "多少",
+    "标准",
+    "条件",
+    "要求",
+    "流程",
+    "规定",
+    "制度",
+    "内容",
+    "问题",
+    "公司",
+    "这个",
+    "那个",
+    "一下",
+    "如何",
+    "怎么",
+    "哪些",
+    "是否",
+    "需要",
+    "可以",
+    "一下子",
+}
+
 
 def router_node(state: GraphState) -> GraphState:
     """Day 16 Router：先尝试 LLM，再用规则兜底。"""
@@ -212,6 +237,10 @@ def relevance_check_node(state: GraphState) -> GraphState:
     hit_count = int(state.get("retrieval_hit_count") or len(retrieved_docs))
     top_score = float(state.get("relevance_score") or 0.0)
     threshold = get_settings().relevance_low_score_threshold
+    support = evaluate_retrieval_support(
+        str(state.get("question") or ""),
+        retrieved_docs,
+    )
 
     updated_state = dict(state)
 
@@ -225,6 +254,18 @@ def relevance_check_node(state: GraphState) -> GraphState:
         updated_state["review_reason"] = (
             f"top score {top_score:.4f} below threshold {threshold:.2f}"
         )
+    elif not support["is_supported"]:
+        updated_state["need_human_review"] = True
+        updated_state["relevance_decision"] = "need_review"
+        if support["matched_terms"]:
+            updated_state["review_reason"] = (
+                "retrieved docs only weakly match key query terms: "
+                + ", ".join(support["matched_terms"][:3])
+            )
+        else:
+            updated_state["review_reason"] = (
+                "retrieved docs do not cover key query terms"
+            )
     else:
         updated_state["need_human_review"] = False
         updated_state["relevance_decision"] = "confident"
@@ -323,6 +364,78 @@ def route_question(question: str, knowledge_base_id: Optional[int]) -> tuple[str
         return (DIRECT_ROUTE, "no knowledge base id provided")
 
     return (RAG_ROUTE, "knowledge base search required")
+
+
+def evaluate_retrieval_support(
+    question: str,
+    retrieved_docs: list[rag_service.RetrievedDocument],
+) -> dict[str, object]:
+    """检查检索结果是否真的覆盖了问题里的关键语义词。"""
+
+    significant_terms = extract_significant_query_terms(question)
+    if not significant_terms:
+        return {
+            "is_supported": True,
+            "matched_terms": [],
+        }
+
+    matched_terms: list[str] = []
+    for document in retrieved_docs[:3]:
+        support_text = build_document_support_text(document)
+        for term in significant_terms:
+            if term in support_text and term not in matched_terms:
+                matched_terms.append(term)
+
+    has_long_match = any(len(term) >= 3 for term in matched_terms)
+    short_match_count = sum(1 for term in matched_terms if len(term) == 2)
+    is_supported = has_long_match or short_match_count >= 2
+
+    return {
+        "is_supported": is_supported,
+        "matched_terms": matched_terms,
+    }
+
+
+def extract_significant_query_terms(question: str) -> list[str]:
+    """从问题里抽取更适合做支持性判断的关键词。"""
+
+    unique_terms: list[str] = []
+    for raw_term in rag_service.extract_query_terms(question):
+        term = normalize_match_text(raw_term)
+        if len(term) < 2 or term in GENERIC_QUERY_TERMS:
+            continue
+        if term not in unique_terms:
+            unique_terms.append(term)
+
+    unique_terms.sort(key=len, reverse=True)
+    long_terms = [term for term in unique_terms if len(term) >= 3][:8]
+    short_terms = [term for term in unique_terms if len(term) == 2][:8]
+    return long_terms + short_terms
+
+
+def build_document_support_text(document: rag_service.RetrievedDocument) -> str:
+    """把标题、正文、heading_path 合并成支持性判断用文本。"""
+
+    heading_path = document.metadata.get("heading_path") or []
+    heading_text = ""
+    if isinstance(heading_path, list):
+        heading_text = " ".join(str(item) for item in heading_path)
+
+    return normalize_match_text(
+        "\n".join(
+            [
+                document.title,
+                heading_text,
+                document.content,
+            ]
+        )
+    )
+
+
+def normalize_match_text(text: str) -> str:
+    """归一化匹配文本，便于做轻量包含判断。"""
+
+    return re.sub(r"\s+", "", text).lower()
 
 
 def is_direct_question(normalized_question: str) -> bool:

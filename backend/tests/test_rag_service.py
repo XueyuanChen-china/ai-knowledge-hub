@@ -2,25 +2,26 @@ import sys
 import unittest
 from pathlib import Path
 
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
 from app.db.models import KnowledgeBase, KnowledgeItem
 from app.services import rag_service
 from app.services.vector_service import SemanticSearchHit
+from postgres_test_utils import PostgresTestDatabase
 
 
 class RagServiceTests(unittest.TestCase):
     def setUp(self) -> None:
-        engine = create_engine(
-            "sqlite://",
-            connect_args={"check_same_thread": False},
-        )
-        SQLModel.metadata.create_all(engine)
-        self.session = Session(engine)
+        self.test_database = PostgresTestDatabase()
+        self.engine = self.test_database.create_engine()
+        self.session = Session(self.engine)
 
         knowledge_base = KnowledgeBase(name="制度库", description="RAG 测试")
         self.session.add(knowledge_base)
@@ -43,6 +44,7 @@ class RagServiceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.session.close()
+        self.test_database.dispose()
 
     def test_retrieve_enriches_titles(self) -> None:
         original_search = rag_service.search_similar_chunks

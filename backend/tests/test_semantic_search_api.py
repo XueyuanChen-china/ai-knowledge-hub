@@ -3,26 +3,27 @@ import unittest
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
 from app.api import search as search_api
 from app.db.models import KnowledgeBase, KnowledgeItem
 from app.schemas.search import SemanticSearchRequest
 from app.services.vector_service import SemanticSearchHit
+from postgres_test_utils import PostgresTestDatabase
 
 
 class SemanticSearchApiTests(unittest.TestCase):
     def setUp(self) -> None:
-        engine = create_engine(
-            "sqlite://",
-            connect_args={"check_same_thread": False},
-        )
-        SQLModel.metadata.create_all(engine)
-        self.session = Session(engine)
+        self.test_database = PostgresTestDatabase()
+        self.engine = self.test_database.create_engine()
+        self.session = Session(self.engine)
 
         knowledge_base = KnowledgeBase(name="制度库", description="用于语义搜索测试")
         self.session.add(knowledge_base)
@@ -45,6 +46,7 @@ class SemanticSearchApiTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.session.close()
+        self.test_database.dispose()
 
     def test_semantic_search_returns_enriched_hits(self) -> None:
         original_search = search_api.search_similar_chunks

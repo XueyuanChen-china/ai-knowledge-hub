@@ -1,5 +1,3 @@
-from typing import Optional
-
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
@@ -164,19 +162,23 @@ def get_checkpoint_snapshot(session: Session, thread_id: str):
     """拿当前 thread 的 checkpoint 快照。"""
 
     graph = build_checkpointed_workflow(session)
+    return get_checkpoint_snapshot_with_graph(graph, thread_id)
+
+
+def get_checkpoint_snapshot_with_graph(graph, thread_id: str):
+    """从已构建 graph 上读取 checkpoint 快照。"""
+
     return graph.get_state(get_thread_config(thread_id))
 
 
 def invoke_graph(
-    session: Session,
+    graph,
     *,
     state: GraphState,
     thread_id: str,
-    retrieve_top_k: int = 5,
 ):
     """启动一次新的图执行。"""
 
-    graph = build_checkpointed_workflow(session, retrieve_top_k=retrieve_top_k)
     return graph.invoke(
         state,
         config=get_thread_config(thread_id),
@@ -184,16 +186,14 @@ def invoke_graph(
 
 
 def resume_graph(
-    session: Session,
+    graph,
     *,
     thread_id: str,
     approved: bool,
     human_note: str = "",
-    retrieve_top_k: int = 5,
 ):
     """从 interrupt 位置恢复执行。"""
 
-    graph = build_checkpointed_workflow(session, retrieve_top_k=retrieve_top_k)
     return graph.invoke(
         Command(
             resume={

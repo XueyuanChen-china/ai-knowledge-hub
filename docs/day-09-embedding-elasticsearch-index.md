@@ -10,7 +10,7 @@
 上传文档
   -> 提取文本
   -> 切成 chunks
-  -> 写入 SQLite
+  -> 写入 PostgreSQL
   -> 生成 embedding
   -> 写入 Elasticsearch
 ```
@@ -154,9 +154,9 @@ POST /documents/{document_id}/index
 2. 重新切 chunk
 3. 旧 chunk 先删掉
 4. 旧向量先从 Elasticsearch 删除
-5. 新 chunk 写入 SQLite
+5. 新 chunk 写入 PostgreSQL
 6. 新向量写入 Elasticsearch
-7. 把 `chunks.vector_id` 回写到 SQLite
+7. 把 `chunks.vector_id` 回写到 PostgreSQL
 8. 把 `documents.status` 更新成 `indexed`
 
 返回：
@@ -178,7 +178,7 @@ POST /documents/{document_id}/index
 只做：
 
 ```text
-切片 + 写 SQLite
+切片 + 写 PostgreSQL
 ```
 
 适合你在开发时先单独确认：
@@ -191,7 +191,7 @@ POST /documents/{document_id}/index
 做完整链路：
 
 ```text
-切片 + SQLite + Embedding + Elasticsearch
+切片 + PostgreSQL + Embedding + Elasticsearch
 ```
 
 这样拆开后更适合学习，也更方便排查问题。

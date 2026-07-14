@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -9,9 +10,17 @@ from app.db.models import Chunk, KnowledgeBase, KnowledgeItem
 from app.schemas.chunk import ChunkRead
 from app.schemas.knowledge_item import (
     KnowledgeItemCreate,
+    KnowledgeItemChunkResponse,
+    KnowledgeItemIndexResponse,
     KnowledgeItemRead,
     KnowledgeItemUpdate,
 )
+from app.services.text_splitter import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    split_document_text,
+)
+from app.services.vector_service import add_chunks, delete_vectors
 
 router = APIRouter(prefix="/knowledge-items", tags=["knowledge-items"])
 
@@ -44,6 +53,21 @@ def ensure_knowledge_base_exists(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge base not found",
         )
+
+
+def get_knowledge_item_or_404(
+    knowledge_item_id: int,
+    session: Session,
+) -> KnowledgeItem:
+    """读取知识条目，不存在就直接抛 404。"""
+
+    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
+    if knowledge_item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge item not found",
+        )
+    return knowledge_item
 
 
 @router.post(
@@ -120,14 +144,78 @@ def get_knowledge_item(
     对应接口：GET /knowledge-items/{id}
     """
 
-    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
-    if knowledge_item is None:
+    return get_knowledge_item_or_404(knowledge_item_id, session)
+
+
+@router.post(
+    "/{knowledge_item_id}/chunks",
+    response_model=KnowledgeItemChunkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def split_knowledge_item_into_chunks(
+    knowledge_item_id: int,
+    session: Session = Depends(get_session),
+) -> KnowledgeItemChunkResponse:
+    """把手动知识条目切成 chunks，并写入 chunks 表。"""
+
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+
+    if not knowledge_item.content.strip():
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge item not found",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Knowledge item has no content",
         )
 
-    return knowledge_item
+    created_chunks = regenerate_knowledge_item_chunks(knowledge_item, session)
+    session.commit()
+
+    return KnowledgeItemChunkResponse(
+        knowledge_item_id=knowledge_item.id,
+        chunk_count=len(created_chunks),
+    )
+
+
+@router.post(
+    "/{knowledge_item_id}/index",
+    response_model=KnowledgeItemIndexResponse,
+    status_code=status.HTTP_200_OK,
+)
+def index_knowledge_item(
+    knowledge_item_id: int,
+    session: Session = Depends(get_session),
+) -> KnowledgeItemIndexResponse:
+    """切分手动知识条目并写入 PostgreSQL + Elasticsearch。"""
+
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+
+    if not knowledge_item.content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Knowledge item has no content",
+        )
+
+    existing_vector_ids = get_existing_knowledge_item_vector_ids(knowledge_item.id, session)
+    if existing_vector_ids:
+        delete_vectors(knowledge_item.knowledge_base_id, existing_vector_ids)
+
+    created_chunks = regenerate_knowledge_item_chunks(knowledge_item, session)
+
+    try:
+        index_result = add_chunks(created_chunks)
+        for chunk, vector_id in zip(created_chunks, index_result.vector_ids):
+            chunk.vector_id = vector_id
+            session.add(chunk)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
+    return KnowledgeItemIndexResponse(
+        knowledge_item_id=knowledge_item.id,
+        chunk_count=len(created_chunks),
+        vector_count=len(index_result.vector_ids),
+        index_name=index_result.index_name,
+    )
 
 
 @router.get("/{knowledge_item_id}/chunks", response_model=list[ChunkRead])
@@ -140,12 +228,7 @@ def list_knowledge_item_chunks(
     对应接口：GET /knowledge-items/{knowledge_item_id}/chunks
     """
 
-    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
-    if knowledge_item is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge item not found",
-        )
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
 
     statement = (
         select(Chunk)
@@ -169,12 +252,7 @@ def update_knowledge_item(
     validate_knowledge_item_status(payload.status)
     ensure_knowledge_base_exists(payload.knowledge_base_id, session)
 
-    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
-    if knowledge_item is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge item not found",
-        )
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
 
     knowledge_item.knowledge_base_id = payload.knowledge_base_id
     knowledge_item.title = payload.title
@@ -200,12 +278,90 @@ def delete_knowledge_item(
     对应接口：DELETE /knowledge-items/{id}
     """
 
-    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
-    if knowledge_item is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge item not found",
-        )
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+
+    existing_vector_ids = get_existing_knowledge_item_vector_ids(knowledge_item.id, session)
+    if existing_vector_ids:
+        delete_vectors(knowledge_item.knowledge_base_id, existing_vector_ids)
+
+    delete_existing_knowledge_item_chunks(knowledge_item.id, session)
 
     session.delete(knowledge_item)
     session.commit()
+
+
+def delete_existing_knowledge_item_chunks(knowledge_item_id: int, session: Session) -> None:
+    """删除知识条目下已有的 chunk。"""
+
+    statement = select(Chunk).where(Chunk.knowledge_item_id == knowledge_item_id)
+    existing_chunks = session.exec(statement).all()
+    for chunk in existing_chunks:
+        session.delete(chunk)
+
+
+def get_existing_knowledge_item_vector_ids(
+    knowledge_item_id: int,
+    session: Session,
+) -> list[str]:
+    """读取知识条目旧 chunk 的 vector_id。"""
+
+    statement = select(Chunk).where(Chunk.knowledge_item_id == knowledge_item_id)
+    existing_chunks = session.exec(statement).all()
+    return [chunk.vector_id for chunk in existing_chunks if chunk.vector_id]
+
+
+def regenerate_knowledge_item_chunks(
+    knowledge_item: KnowledgeItem,
+    session: Session,
+) -> list[Chunk]:
+    """重新切分知识条目并创建 chunk 行对象。"""
+
+    chunk_data_list = split_document_text(
+        knowledge_item.content,
+        "txt",
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+    )
+
+    if not chunk_data_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No chunks generated from knowledge item",
+        )
+
+    delete_existing_knowledge_item_chunks(knowledge_item.id, session)
+    session.flush()
+
+    created_chunks: list[Chunk] = []
+    for index, chunk_data in enumerate(chunk_data_list):
+        metadata = {
+            **chunk_data.metadata,
+            "knowledge_item_id": knowledge_item.id,
+            "knowledge_item_title": knowledge_item.title,
+            "source_type": knowledge_item.source_type,
+            "tags": knowledge_item.tags,
+            "chunk_index": index,
+        }
+
+        chunk_content = chunk_data.content
+        if knowledge_item.title.strip() and not chunk_content.lstrip().startswith("#"):
+            chunk_content = f"# {knowledge_item.title}\n\n{chunk_content}"
+            metadata.setdefault("heading_path", [knowledge_item.title])
+
+        chunk = Chunk(
+            knowledge_base_id=knowledge_item.knowledge_base_id,
+            document_id=knowledge_item.source_document_id,
+            knowledge_item_id=knowledge_item.id,
+            chunk_index=index,
+            content=chunk_content,
+            vector_id=None,
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+        )
+        session.add(chunk)
+        created_chunks.append(chunk)
+
+    session.flush()
+    for chunk in created_chunks:
+        session.refresh(chunk)
+
+    return created_chunks

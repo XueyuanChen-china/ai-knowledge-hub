@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pypdf import PdfReader
 from sqlmodel import Session, select
 
@@ -167,6 +167,25 @@ def upload_document(
     return document
 
 
+@router.get("", response_model=list[DocumentRead])
+def list_documents(
+    knowledge_base_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+) -> list[Document]:
+    """查询文档列表。
+
+    对应接口：GET /documents
+    当前前端文档页会用这个接口展示上传结果，并支持按 knowledge_base_id 过滤。
+    """
+
+    statement = select(Document)
+    if knowledge_base_id is not None:
+        statement = statement.where(Document.knowledge_base_id == knowledge_base_id)
+
+    statement = statement.order_by(Document.created_at.desc(), Document.id.desc())
+    return list(session.exec(statement).all())
+
+
 @router.post(
     "/{document_id}/chunks",
     response_model=DocumentChunkResponse,
@@ -222,7 +241,7 @@ def index_document(
     document_id: int,
     session: Session = Depends(get_session),
 ) -> DocumentIndexResponse:
-    """切 chunk 并写入 SQLite + Elasticsearch。
+    """切 chunk 并写入 PostgreSQL + Elasticsearch。
 
     对应接口：POST /documents/{document_id}/index
     Day 9 先按文档维度做手动触发，方便在 Swagger 里验收。
@@ -266,10 +285,11 @@ def index_document(
         session.commit()
     except Exception:
         session.rollback()
-        if existing_vector_ids:
-            # 旧向量已经删掉时，当前失败会让文档处于未索引状态，避免假装成功。
-            document.status = "uploaded"
-            session.add(document)
+        refreshed_document = session.get(Document, document.id)
+        if refreshed_document is not None:
+            # 索引失败时显式标成 failed，前端才能直接看出这次构建没有成功。
+            refreshed_document.status = "failed"
+            session.add(refreshed_document)
             session.commit()
         raise
 

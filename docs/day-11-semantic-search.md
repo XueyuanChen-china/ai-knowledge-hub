@@ -97,7 +97,7 @@ BAAI/bge-m3
 - `chunk_index`
 - `metadata`
 
-标题信息还是以 SQLite 主表为准。
+标题信息还是以 PostgreSQL 主表为准。
 
 所以搜索返回后，会再根据 `knowledge_item_id` 去数据库里补标题。
 

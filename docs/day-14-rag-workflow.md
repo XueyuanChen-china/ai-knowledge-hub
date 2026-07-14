@@ -7,7 +7,7 @@
 这一阶段不是继续加新功能，而是回答三个问题：
 
 1. 文档从上传到可检索，中间到底经过了哪些步骤？
-2. SQLite、Elasticsearch、RAG Service 各自负责什么？
+2. PostgreSQL、Elasticsearch、RAG Service 各自负责什么？
 3. 本地应该怎么准备测试数据和验收这条链路？
 
 ---
@@ -20,7 +20,7 @@
 上传文档
   -> 提取文本
   -> 文档切分
-  -> chunk 写入 SQLite
+  -> chunk 写入 PostgreSQL
   -> embedding 写入 Elasticsearch
   -> 语义搜索召回 chunk
   -> RAG Service 组装上下文
@@ -118,7 +118,7 @@ parse
 - `chunks.metadata_json`
 - `chunks.chunk_index`
 
-并写入 SQLite 的 `chunks` 表。
+并写入 PostgreSQL 的 `chunks` 表。
 
 ---
 
@@ -147,14 +147,14 @@ vector_service.add_chunks()
 
 这里要注意一个设计点：
 
-> SQLite 是业务主库，Elasticsearch 是检索索引。
+> PostgreSQL 是业务主库，Elasticsearch 是检索索引。
 
 也就是说：
 
-- 主数据以 SQLite 为准
+- 主数据以 PostgreSQL 为准
 - 检索召回以 Elasticsearch 为准
 
-这也是为什么语义搜索结果里的标题，不是直接从 ES 里硬取，而是根据 `knowledge_item_id` 回 SQLite 补齐。
+这也是为什么语义搜索结果里的标题，不是直接从 ES 里硬取，而是根据 `knowledge_item_id` 回 PostgreSQL 补齐。
 
 ---
 
@@ -173,7 +173,7 @@ query
   -> encode_query_text()
   -> Elasticsearch knn
   -> top_k hits
-  -> 回 SQLite 补 title
+  -> 回 PostgreSQL 补 title
   -> 返回搜索结果
 ```
 
@@ -225,7 +225,7 @@ rag_service.generate_answer()
 
 可以这样记：
 
-### SQLite
+### PostgreSQL
 
 负责：
 
@@ -254,7 +254,7 @@ rag_service.generate_answer()
 
 所以可以用一句话概括：
 
-> SQLite 负责“这是什么”，Elasticsearch 负责“最像什么”。
+> PostgreSQL 负责“这是什么”，Elasticsearch 负责“最像什么”。
 
 ---
 
