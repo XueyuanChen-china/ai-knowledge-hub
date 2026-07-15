@@ -14,3 +14,4 @@
 - [Router Upgrade Roadmap](./router-upgrade-roadmap.md)
 - [Retrieval Quality Improvements](./retrieval-quality-improvements.md)
 - [Knowledge Base Deletion Safeguards](./knowledge-base-deletion-safeguards.md)
+- [Large File Upload Roadmap](./large-file-upload-roadmap.md)
