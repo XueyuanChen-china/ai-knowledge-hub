@@ -1,6 +1,5 @@
-from pathlib import Path
-
 from sqlalchemy import inspect, text
+from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
@@ -9,39 +8,64 @@ from app.config import get_settings
 # 如果不导入，SQLModel.metadata 可能不知道有哪些表需要创建。
 from app.db import models  # noqa: F401
 
+POSTGRESQL_PREFIXES = (
+    "postgresql://",
+    "postgresql+psycopg://",
+    "postgresql+psycopg2://",
+)
+
 settings = get_settings()
 
-# SQLite 默认不允许同一个连接跨线程使用。
-# FastAPI 在处理请求时可能跨线程，所以本地 SQLite 开发环境要加 check_same_thread=False。
-connect_args = {"check_same_thread": False}
+
+def is_postgresql_url(database_url: str) -> bool:
+    """判断当前连接串是否为 PostgreSQL。"""
+
+    return database_url.startswith(POSTGRESQL_PREFIXES)
+
+
+def validate_database_url(database_url: str) -> None:
+    """当前项目只接受 PostgreSQL 连接串。"""
+
+    if is_postgresql_url(database_url):
+        return
+
+    raise RuntimeError(
+        "DATABASE_URL must be a PostgreSQL URL, "
+        f"got: {database_url}"
+    )
+
+
+def build_engine(database_url: str) -> Engine:
+    """根据 PostgreSQL 连接串创建 SQLAlchemy Engine。"""
+
+    validate_database_url(database_url)
+    return create_engine(
+        database_url,
+        pool_pre_ping=True,
+    )
+
 
 # engine 是应用连接数据库的核心对象。
 # 后续所有 Session 都会基于这个 engine 创建。
-engine = create_engine(settings.database_url, connect_args=connect_args)
+engine = build_engine(settings.database_url)
 
 
 def create_db_and_tables() -> None:
-    """创建数据库目录和数据表。
+    """在 PostgreSQL 中创建缺失的数据表。"""
 
-    SQLite 是文件型数据库，第一次启动时需要确保 data/sqlite 目录存在。
-    SQLModel.metadata.create_all 会根据 models.py 中的表模型创建表。
-    """
-
-    db_path = settings.database_url.removeprefix("sqlite:///")
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     SQLModel.metadata.create_all(engine)
-    ensure_document_columns()
+    ensure_document_columns(engine)
+    ensure_conversation_columns(engine)
 
 
-def ensure_document_columns() -> None:
-    """补齐开发期新增的 documents 字段。
+def ensure_document_columns(current_engine: Engine) -> None:
+    """补齐开发期遗留的 documents 字段。
 
     create_all 只会创建不存在的表，不会自动给已有表添加新字段。
-    Day 6 新增 extracted_text 后，旧的本地 SQLite 数据库需要补一次列。
-    正式项目后面应该改用 Alembic 管理迁移。
+    这里继续保留一次兼容补列逻辑，避免旧 PostgreSQL 库缺字段时直接启动失败。
     """
 
-    inspector = inspect(engine)
+    inspector = inspect(current_engine)
     if "documents" not in inspector.get_table_names():
         return
 
@@ -49,18 +73,34 @@ def ensure_document_columns() -> None:
     if "extracted_text" in columns:
         return
 
-    with engine.begin() as connection:
+    with current_engine.begin() as connection:
         connection.execute(
             text("ALTER TABLE documents ADD COLUMN extracted_text TEXT DEFAULT ''")
         )
 
 
-def get_session():
-    """FastAPI 依赖函数：为每个请求提供数据库 Session。
+def ensure_conversation_columns(current_engine: Engine) -> None:
+    """补齐开发期新增的 conversations 字段。"""
 
-    后续写 CRUD 接口时，可以通过 Depends(get_session) 拿到 session。
-    with 语句会在请求结束后自动关闭数据库会话。
-    """
+    inspector = inspect(current_engine)
+    if "conversations" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("conversations")}
+    if "is_pinned" in columns:
+        return
+
+    with current_engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+
+
+def get_session():
+    """FastAPI 依赖函数：为每个请求提供数据库 Session。"""
 
     with Session(engine) as session:
         yield session

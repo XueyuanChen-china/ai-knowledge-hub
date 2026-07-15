@@ -89,7 +89,7 @@ class KnowledgeItem(SQLModel, table=True):
     # 知识标题，用于列表展示和关键词搜索。
     title: str = Field(index=True, max_length=200)
 
-    # 知识正文。SQLite 里会以 TEXT 类型保存。
+    # 知识正文。PostgreSQL 中会以 TEXT 类型保存。
     content: str
 
     # 标签先用字符串保存，例如 '["制度", "报销"]'。
@@ -173,7 +173,8 @@ class Chunk(SQLModel, table=True):
     # chunk 的正文内容。
     content: str
 
-    # 向量库里的 ID，例如 Chroma 返回的 id。
+    # 向量索引里的稳定 ID。
+    # 当前会同步写入 PostgreSQL 和 Elasticsearch，用它把两边的数据关联起来。
     vector_id: Optional[str] = Field(default=None, index=True, max_length=255)
 
     # 元数据 JSON 字符串，例如页码、来源、标签等。
@@ -200,6 +201,9 @@ class Conversation(SQLModel, table=True):
 
     # LangGraph 里的 thread_id，用来关联 checkpoint。
     thread_id: str = Field(index=True, max_length=255)
+
+    # 是否在会话列表置顶。
+    is_pinned: bool = Field(default=False, index=True)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

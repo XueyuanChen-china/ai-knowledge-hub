@@ -275,6 +275,6 @@ curl http://127.0.0.1:8000/knowledge-items/3/chunks
 ```text
 读取 chunks 表
 生成 embedding
-写入 Chroma
+写入 Elasticsearch
 回填 chunks.vector_id
 ```

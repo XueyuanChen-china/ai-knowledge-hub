@@ -252,7 +252,12 @@ def build_heading_based_plain_text_elements_from_records(
             if candidate_index + 1 < len(heading_candidates)
             else len(records)
         )
-        current_heading_stack = current_heading_stack[: max(heading_candidate.level - 1, 0)]
+        effective_level = normalize_plain_text_heading_level(
+            heading_candidate.level,
+            current_heading_stack,
+            heading_candidate.pattern,
+        )
+        current_heading_stack = current_heading_stack[: max(effective_level - 1, 0)]
         current_heading_stack.append(heading_candidate.text)
         heading_path = current_heading_stack.copy()
 
@@ -293,6 +298,36 @@ def build_heading_based_plain_text_elements_from_records(
         source_index += len(paragraph_elements)
 
     return elements
+
+
+def normalize_plain_text_heading_level(
+    detected_level: int,
+    current_heading_stack: list[str],
+    current_pattern: str,
+) -> int:
+    """把纯文本标题层级做一层轻量归一化。
+
+    目的：
+    - 如果当前还没有父级标题，`一、二、三` 这种枚举标题不应该直接从 level 2 开始，
+      否则后续会被错误地串成父子关系。
+    - 如果层级跨度过大，也做一下收敛，避免直接从空栈跳到更深层。
+    """
+
+    if detected_level <= 1:
+        return 1
+
+    if not current_heading_stack:
+        return 1
+
+    if current_pattern in {"cn_enum", "paren_enum"}:
+        current_heading_match = match_heading_pattern(current_heading_stack[-1])
+        current_heading_pattern = (
+            current_heading_match[1] if current_heading_match is not None else None
+        )
+        if current_heading_pattern == current_pattern:
+            return len(current_heading_stack)
+
+    return min(detected_level, len(current_heading_stack) + 1)
 
 
 def build_paragraph_only_plain_text_elements_from_records(

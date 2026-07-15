@@ -1,16 +1,17 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pypdf import PdfReader
 from sqlmodel import Session, select
 
 from app.db.database import get_session
 from app.db.models import Chunk, Document, KnowledgeBase, KnowledgeItem
 from app.schemas.chunk import ChunkRead
-from app.schemas.document import DocumentChunkResponse, DocumentRead
+from app.schemas.document import DocumentChunkResponse, DocumentIndexResponse, DocumentRead
 from app.services.text_splitter import (
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
@@ -19,6 +20,8 @@ from app.services.text_splitter import (
 )
 from app.services.document_splitter.parsers.docx_parser import document_to_text
 from app.services.document_splitter.parsers.excel_parser import workbook_to_text
+from app.services.document_splitter.parsers.pdf_layout_parser import pdf_layout_document_to_text
+from app.services.vector_service import add_chunks, delete_vectors
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -63,6 +66,10 @@ def extract_text_from_file(file_path: Path, suffix: str) -> str:
         return file_path.read_text(encoding="utf-8")
 
     if suffix == ".pdf":
+        layout_text = pdf_layout_document_to_text(str(file_path))
+        if layout_text:
+            return layout_text
+
         reader = PdfReader(str(file_path))
         page_texts = []
 
@@ -160,6 +167,25 @@ def upload_document(
     return document
 
 
+@router.get("", response_model=list[DocumentRead])
+def list_documents(
+    knowledge_base_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+) -> list[Document]:
+    """查询文档列表。
+
+    对应接口：GET /documents
+    当前前端文档页会用这个接口展示上传结果，并支持按 knowledge_base_id 过滤。
+    """
+
+    statement = select(Document)
+    if knowledge_base_id is not None:
+        statement = statement.where(Document.knowledge_base_id == knowledge_base_id)
+
+    statement = statement.order_by(Document.created_at.desc(), Document.id.desc())
+    return list(session.exec(statement).all())
+
+
 @router.post(
     "/{document_id}/chunks",
     response_model=DocumentChunkResponse,
@@ -192,53 +218,87 @@ def split_document_into_chunks(
     if document.file_type == "pdf":
         pdf_pages = extract_pdf_pages(Path(document.file_path))
 
-    chunk_data_list = split_document_text(
-        document.extracted_text,
-        document.file_type,
-        chunk_size=DEFAULT_CHUNK_SIZE,
-        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+    knowledge_item, created_chunks = regenerate_document_chunks(
+        document,
+        session,
         pdf_pages=pdf_pages,
-        pdf_path=document.file_path if document.file_type == "pdf" else None,
-        spreadsheet_path=document.file_path if document.file_type == "xlsx" else None,
-        word_path=document.file_path if document.file_type == "docx" else None,
     )
-
-    if not chunk_data_list:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No chunks generated from document",
-        )
-
-    knowledge_item = get_or_create_document_knowledge_item(document, session)
-    delete_existing_document_chunks(document.id, session)
-
-    for index, chunk_data in enumerate(chunk_data_list):
-        metadata = {
-            **chunk_data.metadata,
-            "document_id": document.id,
-            "filename": document.filename,
-            "file_type": document.file_type,
-            "knowledge_item_id": knowledge_item.id,
-            "chunk_index": index,
-        }
-
-        chunk = Chunk(
-            knowledge_base_id=document.knowledge_base_id,
-            document_id=document.id,
-            knowledge_item_id=knowledge_item.id,
-            chunk_index=index,
-            content=chunk_data.content,
-            vector_id=None,
-            metadata_json=json.dumps(metadata, ensure_ascii=False),
-        )
-        session.add(chunk)
-
     session.commit()
 
     return DocumentChunkResponse(
         document_id=document.id,
         knowledge_item_id=knowledge_item.id,
-        chunk_count=len(chunk_data_list),
+        chunk_count=len(created_chunks),
+    )
+
+
+@router.post(
+    "/{document_id}/index",
+    response_model=DocumentIndexResponse,
+    status_code=status.HTTP_200_OK,
+)
+def index_document(
+    document_id: int,
+    session: Session = Depends(get_session),
+) -> DocumentIndexResponse:
+    """切 chunk 并写入 PostgreSQL + Elasticsearch。
+
+    对应接口：POST /documents/{document_id}/index
+    Day 9 先按文档维度做手动触发，方便在 Swagger 里验收。
+    """
+
+    document = session.get(Document, document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if not document.extracted_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Document has no extracted text",
+        )
+
+    pdf_pages = None
+    if document.file_type == "pdf":
+        pdf_pages = extract_pdf_pages(Path(document.file_path))
+
+    existing_vector_ids = get_existing_document_vector_ids(document.id, session)
+    if existing_vector_ids:
+        delete_vectors(document.knowledge_base_id, existing_vector_ids)
+
+    knowledge_item, created_chunks = regenerate_document_chunks(
+        document,
+        session,
+        pdf_pages=pdf_pages,
+    )
+
+    try:
+        index_result = add_chunks(created_chunks)
+        for chunk, vector_id in zip(created_chunks, index_result.vector_ids):
+            chunk.vector_id = vector_id
+            session.add(chunk)
+
+        document.status = "indexed"
+        session.add(document)
+        session.commit()
+    except Exception:
+        session.rollback()
+        refreshed_document = session.get(Document, document.id)
+        if refreshed_document is not None:
+            # 索引失败时显式标成 failed，前端才能直接看出这次构建没有成功。
+            refreshed_document.status = "failed"
+            session.add(refreshed_document)
+            session.commit()
+        raise
+
+    return DocumentIndexResponse(
+        document_id=document.id,
+        knowledge_item_id=knowledge_item.id,
+        chunk_count=len(created_chunks),
+        vector_count=len(index_result.vector_ids),
+        index_name=index_result.index_name,
     )
 
 
@@ -311,3 +371,77 @@ def delete_existing_document_chunks(document_id: int, session: Session) -> None:
     existing_chunks = session.exec(statement).all()
     for chunk in existing_chunks:
         session.delete(chunk)
+
+
+def get_existing_document_vector_ids(
+    document_id: int,
+    session: Session,
+) -> list[str]:
+    """读取文档旧 chunk 的 vector_id，供重建索引时先删 Elasticsearch 中的旧向量。"""
+
+    statement = select(Chunk).where(Chunk.document_id == document_id)
+    existing_chunks = session.exec(statement).all()
+    return [chunk.vector_id for chunk in existing_chunks if chunk.vector_id]
+
+
+def regenerate_document_chunks(
+    document: Document,
+    session: Session,
+    *,
+    pdf_pages: Optional[list[PdfPageText]] = None,
+) -> tuple[KnowledgeItem, list[Chunk]]:
+    """重新切分文档并创建 chunk 行对象。
+
+    这个函数只负责把 chunk 写到当前 Session，不负责 commit。
+    这样 /chunks 和 /index 都能复用同一套生成逻辑。
+    """
+
+    chunk_data_list = split_document_text(
+        document.extracted_text,
+        document.file_type,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+        chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+        pdf_pages=pdf_pages,
+        pdf_path=document.file_path if document.file_type == "pdf" else None,
+        spreadsheet_path=document.file_path if document.file_type == "xlsx" else None,
+        word_path=document.file_path if document.file_type == "docx" else None,
+    )
+
+    if not chunk_data_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No chunks generated from document",
+        )
+
+    knowledge_item = get_or_create_document_knowledge_item(document, session)
+    delete_existing_document_chunks(document.id, session)
+    session.flush()
+
+    created_chunks: list[Chunk] = []
+    for index, chunk_data in enumerate(chunk_data_list):
+        metadata = {
+            **chunk_data.metadata,
+            "document_id": document.id,
+            "filename": document.filename,
+            "file_type": document.file_type,
+            "knowledge_item_id": knowledge_item.id,
+            "chunk_index": index,
+        }
+
+        chunk = Chunk(
+            knowledge_base_id=document.knowledge_base_id,
+            document_id=document.id,
+            knowledge_item_id=knowledge_item.id,
+            chunk_index=index,
+            content=chunk_data.content,
+            vector_id=None,
+            metadata_json=json.dumps(metadata, ensure_ascii=False),
+        )
+        session.add(chunk)
+        created_chunks.append(chunk)
+
+    session.flush()
+    for chunk in created_chunks:
+        session.refresh(chunk)
+
+    return knowledge_item, created_chunks
