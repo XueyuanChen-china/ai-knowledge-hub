@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -96,6 +97,107 @@ class Settings(BaseSettings):
     # 如果 top score 低于这个值，就先不直接编答案，而是标记 need_human_review。
     relevance_low_score_threshold: float = 0.78
 
+    # 对象存储提供方。Phase 1 先固定支持阿里云 OSS。
+    storage_provider: str = "aliyun-oss"
+
+    # 阿里云 OSS 接入参数。
+    oss_endpoint: str = "oss-cn-shanghai.aliyuncs.com"
+    oss_region: str = "cn-shanghai"
+    oss_bucket: str = "ai-knowledge-hub-xueyuan-dev"
+    # 这两个敏感配置只从环境变量读取，不在代码里提供真实默认值。
+    oss_access_key_id: str = Field(
+        default="",
+        validation_alias="OSS_ACCESS_KEY_ID",
+    )
+    oss_access_key_secret: str = Field(
+        default="",
+        validation_alias="OSS_ACCESS_KEY_SECRET",
+    )
+    oss_storage_prefix: str = "raw/dev"
+    oss_presign_expire_seconds: int = 900
+
+    # 上传任务默认分片大小。Phase 1 还不做真实分片上传，但要把协议字段先固化下来。
+    upload_default_part_size: int = 5 * 1024 * 1024
+
+    # 单文件上传大小上限，默认 10GB。
+    upload_max_file_size: int = 10 * 1024 * 1024 * 1024
+
+    # 上传任务默认有效期，过期后需要清理未完成任务。
+    upload_task_expire_hours: int = 24
+
+    # 单个 part 最多允许重试多少次。
+    upload_max_part_retries: int = 5
+
+    # 批量 presign 一次最多发多少个 part。
+    upload_presign_batch_max_parts: int = 20
+
+    # 返回给前端的建议并发上传度。
+    upload_recommended_parallelism: int = 3
+
+    # 上传完成后是否默认自动创建 documents。
+    upload_auto_create_document: bool = True
+
+    # 上传完成后是否默认自动触发 parse / split / embed / index。
+    upload_auto_index_on_complete: bool = True
+
+    # 是否启用应用内上传后处理 worker。
+    upload_worker_enabled: bool = True
+
+    # 上传后处理执行后端：in_app / celery。
+    # Phase C 开始支持 celery 单阶段 download 消费。
+    upload_processing_backend: str = "celery"
+
+    # 后处理 job 轮询间隔。
+    upload_job_poll_interval_seconds: int = 2
+
+    # 后处理 worker 最大并发任务数。
+    upload_job_max_workers: int = 4
+
+    # 后处理 job 被某个 worker 抢占后的租约时长。
+    # 如果进程崩溃，超过这个时间后其他 worker 可以重新 claim。
+    upload_job_lease_seconds: int = 3600
+
+    # 下载/解析阶段的并发上限。
+    upload_download_stage_concurrency: int = 2
+
+    # 索引阶段的并发上限。
+    upload_index_stage_concurrency: int = 1
+
+    # 后处理 job 最大重试次数。
+    upload_job_max_retries: int = 3
+
+    # 后处理重试退避起始秒数。
+    upload_job_retry_backoff_seconds: int = 5
+
+    # 后处理重试退避最大秒数。
+    upload_job_retry_backoff_max_seconds: int = 300
+
+    # 每个上传发起人允许的活跃上传任务上限。
+    upload_max_active_tasks_per_actor: int = 20
+
+    # 每个上传发起人每天允许申请的总字节配额。
+    upload_daily_quota_bytes: int = 20 * 1024 * 1024 * 1024
+
+    # 本地回落文件的保留时长。
+    upload_local_retention_hours: int = 24
+
+    # magic number 识别时读取的头部字节数。
+    upload_magic_sniff_bytes: int = 8192
+
+    # Office zip 文档允许的最大成员数。
+    upload_zip_max_members: int = 5000
+
+    # Office zip 文档允许的总解压大小。
+    upload_zip_max_uncompressed_bytes: int = 512 * 1024 * 1024
+
+    # Office zip 文档允许的最大压缩比。
+    upload_zip_max_compression_ratio: float = 200.0
+
+    # Celery / RabbitMQ 基础接入。Phase B 只跑 hello task，不接完整上传流程。
+    celery_broker_url: str = "amqp://guest:guest@localhost:5672//"
+    celery_result_backend: str = ""
+    celery_task_default_queue: str = "ai_knowledge_hub"
+
     # 告诉 pydantic-settings 从 backend/.env 文件读取配置。
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
@@ -124,3 +226,24 @@ def get_cors_allow_origins() -> list[str]:
         for origin in settings.cors_allow_origins.split(",")
         if origin.strip()
     ]
+
+
+def validate_oss_settings(settings: Settings) -> None:
+    """校验阿里云 OSS Phase 1 所需的最小配置。"""
+
+    required_values = {
+        "OSS_ENDPOINT": settings.oss_endpoint,
+        "OSS_REGION": settings.oss_region,
+        "OSS_BUCKET": settings.oss_bucket,
+        "OSS_STORAGE_PREFIX": settings.oss_storage_prefix,
+        "OSS_ACCESS_KEY_ID": settings.oss_access_key_id,
+        "OSS_ACCESS_KEY_SECRET": settings.oss_access_key_secret,
+    }
+    missing_keys = [
+        key
+        for key, value in required_values.items()
+        if not str(value).strip()
+    ]
+    if missing_keys:
+        missing_text = ", ".join(missing_keys)
+        raise RuntimeError(f"Missing required OSS settings: {missing_text}")

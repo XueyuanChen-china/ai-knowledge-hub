@@ -52,6 +52,34 @@ def add_chunks(chunks: list[Chunk]) -> VectorIndexResult:
     if not chunks:
         raise ValueError("chunks must not be empty")
 
+    embeddings = embed_chunks(chunks)
+    return index_chunks(chunks, embeddings)
+
+
+def embed_chunks(chunks: list[Chunk]) -> list[list[float]]:
+    """只执行 embedding，不写 Elasticsearch。"""
+
+    if not chunks:
+        raise ValueError("chunks must not be empty")
+
+    embedding_model = get_embedding_model()
+    texts = [chunk.content for chunk in chunks]
+    embeddings = encode_texts(embedding_model, texts)
+    validate_embedding_dimensions(embeddings)
+    return embeddings
+
+
+def index_chunks(
+    chunks: list[Chunk],
+    embeddings: list[list[float]],
+) -> VectorIndexResult:
+    """使用已生成的 embedding 写入 Elasticsearch。"""
+
+    if not chunks:
+        raise ValueError("chunks must not be empty")
+    if len(chunks) != len(embeddings):
+        raise ValueError("chunks and embeddings must have the same length")
+
     knowledge_base_id = chunks[0].knowledge_base_id
     if any(chunk.knowledge_base_id != knowledge_base_id for chunk in chunks):
         raise ValueError("all chunks must belong to the same knowledge base")
@@ -59,10 +87,6 @@ def add_chunks(chunks: list[Chunk]) -> VectorIndexResult:
     index_name = build_index_name(knowledge_base_id)
     client = get_elasticsearch_client()
     ensure_index(client, index_name)
-
-    embedding_model = get_embedding_model()
-    texts = [chunk.content for chunk in chunks]
-    embeddings = encode_texts(embedding_model, texts)
     validate_embedding_dimensions(embeddings)
     vector_ids = [build_stable_vector_id(chunk) for chunk in chunks]
     refresh = get_write_refresh_option()

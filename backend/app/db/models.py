@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -180,6 +181,10 @@ class Chunk(SQLModel, table=True):
     # 元数据 JSON 字符串，例如页码、来源、标签等。
     metadata_json: str = ""
 
+    # 阶段级流水线中暂存 embedding 结果。
+    # embed 阶段写入，index 阶段消费后清空，避免重复调用模型。
+    embedding_json: str = ""
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -260,3 +265,209 @@ class ReviewTask(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UploadTask(SQLModel, table=True):
+    """上传任务表。
+
+    Phase 1 先把“上传任务”作为独立主表落下来。
+    它负责承接前端初始化上传、对象存储 upload_id、文件元数据和后续完成上传的状态。
+    """
+
+    __tablename__ = "upload_tasks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    # 对外暴露的稳定上传任务 ID。
+    upload_id: str = Field(index=True, unique=True, max_length=64)
+
+    # 上传文件归属哪个知识库。
+    knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
+
+    # 用户原始文件名只保留作展示，不直接参与 object_key 生成。
+    original_filename: str = Field(max_length=255)
+
+    # 当前对象存储提供方。Phase 1 固定是 aliyun-oss。
+    storage_provider: str = Field(max_length=50)
+
+    # 目标 bucket。
+    bucket_name: str = Field(max_length=255)
+
+    # 后端统一生成的对象路径，例如 raw/dev/7/upl_xxx/source.pdf。
+    object_key: str = Field(max_length=500)
+
+    # 文件后缀类型，例如 pdf / docx / xlsx。
+    file_type: str = Field(max_length=50)
+
+    # 客户端声明的 MIME 类型。
+    client_mime_type: str = Field(default="", max_length=255)
+
+    # 服务端后续可补充探测结果。Phase 1 先允许为空。
+    detected_mime_type: str = Field(default="", max_length=255)
+
+    # 文件总大小，单位字节。
+    file_size: int = Field(default=0)
+
+    # 上传协议里约定的单片大小，单位字节。
+    part_size: int = Field(default=0)
+
+    # 按 file_size / part_size 推导出的总片数。
+    total_parts: int = Field(default=0)
+
+    # 整文件 SHA256，前端可选上传；Phase 1 先只存储，不强制。
+    file_sha256: str = Field(default="", max_length=128)
+
+    # 对象存储返回的 multipart upload_id。
+    storage_upload_id: str = Field(default="", max_length=255)
+
+    # 上传任务状态。
+    status: str = Field(default="initiated", index=True, max_length=50)
+
+    # 已完成片数。Phase 1 还不会真实推进，但字段先固化。
+    completed_parts: int = Field(default=0)
+
+    # 上传任务过期时间。
+    expires_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # 上传完成后是否自动创建 documents。
+    auto_create_document: bool = Field(default=True)
+
+    # 上传完成后是否自动触发 parse / split / embed / index。
+    auto_index_on_complete: bool = Field(default=True)
+
+    # 上传完成后关联生成的 document。
+    document_id: Optional[int] = Field(default=None, foreign_key="documents.id", index=True)
+
+    # 上传完成后的处理状态。
+    processing_status: str = Field(default="", index=True, max_length=50)
+
+    # 上传完成后的处理错误。
+    processing_error_message: str = ""
+
+    # 错误信息。失败时用于排查。
+    error_message: str = ""
+
+    # 预留上传人标识，当前先不强依赖用户系统。
+    created_by: str = Field(default="", max_length=100)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UploadPart(SQLModel, table=True):
+    """上传分片表。
+
+    Phase 1 不实现真实分片上传，但先把 part 级别的存储结构准备好，
+    这样后面接预签名 URL、断点续传时不需要推翻表设计。
+    """
+
+    __tablename__ = "upload_parts"
+    __table_args__ = (
+        UniqueConstraint(
+            "upload_task_id",
+            "part_number",
+            name="uq_upload_parts_task_part",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    # 所属上传任务。
+    upload_task_id: int = Field(foreign_key="upload_tasks.id", index=True)
+
+    # 第几片，从 1 开始。
+    part_number: int = Field(index=True)
+
+    # 对象存储返回的 etag，后续 complete multipart upload 时会用到。
+    etag: str = Field(default="", max_length=255)
+
+    # 这一片的字节大小。
+    part_size: int = Field(default=0)
+
+    # 这一片的可选 hash。
+    part_sha256: str = Field(default="", max_length=128)
+
+    # 当前分片状态：pending / uploaded / verified / failed。
+    status: str = Field(default="pending", index=True, max_length=50)
+
+    # 当前分片的重试次数。
+    retry_count: int = Field(default=0)
+
+    # 最近一次错误信息。
+    last_error_message: str = ""
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UploadProcessingJob(SQLModel, table=True):
+    """上传完成后的文档处理任务。
+
+    当前先把上传后处理抽成独立 job 记录。
+    即使今天还是同步执行，后面也能平滑切到异步 worker。
+    """
+
+    __tablename__ = "upload_processing_jobs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    upload_task_id: int = Field(foreign_key="upload_tasks.id", index=True)
+    document_id: Optional[int] = Field(default=None, foreign_key="documents.id", index=True)
+
+    # job_type 是粗粒度业务类型；stage 是流水线里的具体阶段。
+    # Phase A 先创建 stage=download 的第一阶段 job，后续再接 parse/split/embed/index。
+    job_type: str = Field(default="upload_pipeline", index=True, max_length=50)
+    stage: str = Field(default="download", index=True, max_length=50)
+    depends_on_job_id: Optional[int] = Field(
+        default=None,
+        foreign_key="upload_processing_jobs.id",
+        index=True,
+    )
+
+    status: str = Field(default="pending", index=True, max_length=50)
+    current_step: str = Field(default="", max_length=100)
+
+    # retry_count 继续保留给旧逻辑；attempt_count/max_attempts 用于阶段级 job 语义。
+    retry_count: int = Field(default=0)
+    max_retry_count: int = Field(default=3)
+    attempt_count: int = Field(default=0)
+    max_attempts: int = Field(default=3)
+    next_run_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    celery_task_id: str = Field(default="", index=True, max_length=255)
+
+    # claim_token / locked_by / lease_expires_at 用来表达“这个 job 已被某个 worker 抢占”。
+    # 后续如果 worker 崩溃，租约过期后其他 worker 可以重新抢占。
+    claim_token: str = Field(default="", index=True, max_length=64)
+    locked_by: str = Field(default="", index=True, max_length=100)
+    claimed_at: Optional[datetime] = Field(default=None)
+    lease_expires_at: Optional[datetime] = Field(default=None, index=True)
+
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    last_alert_at: Optional[datetime] = Field(default=None)
+    alert_status: str = Field(default="", max_length=50)
+    error_message: str = ""
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UploadAuditLog(SQLModel, table=True):
+    """上传治理审计日志。
+
+    先记录关键控制面事件，后面接告警平台或审计系统时可复用这张表。
+    """
+
+    __tablename__ = "upload_audit_logs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    upload_task_id: Optional[int] = Field(default=None, foreign_key="upload_tasks.id", index=True)
+    processing_job_id: Optional[int] = Field(default=None, foreign_key="upload_processing_jobs.id", index=True)
+
+    actor: str = Field(default="", index=True, max_length=100)
+    event_type: str = Field(index=True, max_length=100)
+    level: str = Field(default="info", index=True, max_length=20)
+    detail_json: str = ""
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)

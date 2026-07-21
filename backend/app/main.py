@@ -6,8 +6,10 @@ from app.api.document import router as document_router
 from app.api.knowledge_base import router as knowledge_base_router
 from app.api.knowledge_item import router as knowledge_item_router
 from app.api.search import router as search_router
+from app.api.upload import router as upload_router
 from app.config import get_cors_allow_origins, get_settings
 from app.db.database import create_db_and_tables
+from app.services.upload_worker import get_upload_processing_worker_manager
 
 # 读取项目配置，例如应用名称、数据库地址等。
 settings = get_settings()
@@ -42,6 +44,10 @@ app.include_router(document_router)
 # 注册后，Swagger 里会出现 /search/semantic 等检索接口。
 app.include_router(search_router)
 
+# 注册大文件上传骨架路由。
+# 注册后，Swagger 里会出现 /uploads/init、/uploads/{upload_id} 等接口。
+app.include_router(upload_router)
+
 # 注册基于 LangGraph 的对话路由。
 # 注册后，Swagger 里会出现 /api/chat 和 /api/review/resume。
 app.include_router(chat_router)
@@ -56,6 +62,15 @@ def on_startup() -> None:
     """
 
     create_db_and_tables()
+    if settings.upload_worker_enabled:
+        get_upload_processing_worker_manager().start(settings)
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    """应用停止时关闭后台 worker。"""
+
+    get_upload_processing_worker_manager().stop()
 
 
 @app.get("/health")

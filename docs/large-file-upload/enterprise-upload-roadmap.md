@@ -1,31 +1,32 @@
 # Enterprise Upload Roadmap
 
-这份文档把当前项目的大文件上传方案直接提升到企业版目标，不再从“本地单接口上传”出发。
+这份路线图以当前仓库的真实状态为前提：
 
-核心判断：
+- 后端已经是 `PostgreSQL + SQLModel`
+- 当前有 FastAPI 主服务
+- 当前还没有 Alembic
+- 当前文档解析、切片、Embedding、Elasticsearch 已经存在，但上传链路仍然偏“单接口 + 本地文件”
 
-- 如果目标是面试亮点和企业项目表达，建议直接按“对象存储 + 分片上传 + 异步处理”设计。
-- 对象存储是更合理的默认方案。
-- 上传服务和知识索引服务应该解耦。
+所以这份方案不再讨论 SQLite，也不再以 MinIO 作为当前 Phase 1 的落地目标，而是直接对齐阿里云 OSS。
 
-## 1. 目标方案
+## 1. 目标架构
 
 目标链路：
 
 ```text
 前端
-  -> 请求创建上传任务
-  -> 获取对象存储分片上传凭证
-  -> 直接上传分片到对象存储
-  -> 通知后端完成上传
+  -> POST /uploads/init
+  -> 获取 upload_id / object_key / part_size / total_parts
+  -> 后续按 multipart 协议把文件上传到阿里云 OSS
+  -> POST /uploads/{upload_id}/complete
 
-后端
-  -> 记录 upload_task / upload_part
-  -> 校验对象完整性
-  -> 创建 document 记录
-  -> 投递 parse/index job
+后端 Upload API
+  -> 记录 upload_tasks / upload_parts
+  -> 维护上传状态
+  -> 校验对象存储元数据
+  -> 创建 document / index job
 
-后台 worker
+后台处理链路（后续 Phase）
   -> parse
   -> split
   -> embed
@@ -33,104 +34,98 @@
   -> update status
 ```
 
-对象存储可选：
+## 2. 为什么当前直接用阿里云 OSS
 
-- 阿里云 OSS
-- AWS S3
-- MinIO
+当前目标不是做“最便宜的本地演示版”，而是做更像企业项目的表达。
 
-如果是本地开发，推荐：
-
-```text
-开发环境：MinIO
-生产表达：OSS / S3
-```
-
-原因很直接：
-
-- 企业里大文件通常不走业务服务本机磁盘
-- 业务服务不该承受全部上传带宽
-- 文件原件、分片、归档、更适合放对象存储
-- 后续做 CDN、权限控制、生命周期管理也更自然
-
-## 2. 为什么企业版默认用对象存储
-
-如果文件先传到 FastAPI：
+如果还把大文件先传到 FastAPI，再落本地磁盘：
 
 ```text
 Browser -> FastAPI -> local disk
 ```
 
-问题是：
+问题很直接：
 
-- 大文件流量会经过业务服务
-- 网卡、磁盘 IO、连接数都会被上传拖住
-- 后续扩容时，应用服务和文件存储耦合
-- 多实例部署后，本地文件一致性麻烦
+- 上传流量会穿过业务服务
+- 应用实例要承担网络 IO 和磁盘 IO
+- 多实例部署时本地文件不一致
+- 后面做断点续传、生命周期管理、跨机房存储都不自然
 
-如果改成对象存储直传：
+如果改成对象存储：
 
 ```text
-Browser -> OSS/S3/MinIO
-Backend -> 只负责签名、状态、元数据
+Browser -> Aliyun OSS
+Backend -> 只负责签名、状态、元数据、后续处理调度
 ```
 
-好处是：
+好处更符合企业常态：
 
-- 上传流量绕过业务服务
-- 文件持久化和应用实例解耦
-- 天然适合大文件、并发上传、多实例部署
-- 后续接分片上传、断点续传更顺
+- 文件原件和应用服务解耦
+- 更容易做大文件上传和恢复
+- 更容易做权限控制、审计、归档和过期清理
+- 后面接 Worker 和异步索引链路更顺
 
-## 3. 推荐系统边界
-
-建议把系统拆成四层。
+## 3. 当前推荐边界
 
 ### 3.1 Upload API
 
 负责：
 
 - 初始化上传任务
-- 生成分片上传凭证
-- 查询上传状态
-- 完成上传
+- 生成对象路径
+- 维护 `upload_tasks / upload_parts`
+- 完成上传状态流转
 
 不负责：
 
-- PDF 解析
+- 文档解析
 - 文本切片
 - embedding
 - Elasticsearch 写入
 
-### 3.2 Object Storage
+### 3.2 Object Storage Adapter
 
 负责：
 
-- 保存原始文件
-- 保存上传分片
-- 保存合并后的最终对象
+- 屏蔽具体 OSS SDK
+- 提供 multipart 初始化、complete、abort、presign 等能力
 
-### 3.3 Document Processing Worker
+这样后续如果需要兼容 S3，只要补新 adapter。
 
-负责：
+### 3.3 Document Processing / Indexing
 
-- 拉取对象存储文件
-- 解析 PDF / DOCX / XLSX / TXT / MD
-- 生成结构化文本
-- 失败重试
+后续继续保留为独立阶段：
 
-### 3.4 Index Worker
+- 上传完成后再创建 document
+- parse 和 index 继续异步化
+- 和上传链路分开限流
 
-负责：
+## 4. 当前阶段状态
 
-- split
-- embedding
-- 写 Elasticsearch
-- 更新 chunks / documents / jobs 状态
+### Phase 1 已落地
 
-## 4. 推荐数据模型
+### 已要求落地的内容
 
-### 4.1 `upload_tasks`
+- 阿里云 OSS 配置接入
+- 对象存储封装层
+- `upload_tasks` / `upload_parts` 模型
+- `POST /uploads/init`
+- `GET /uploads/{upload_id}`
+- `POST /uploads/{upload_id}/complete`
+- 基础测试
+
+### Phase 1 已完成后留空的内容
+
+- 真实前端分片上传
+- `POST /uploads/{upload_id}/parts/presign`
+- 断点续传恢复逻辑
+- Worker / MQ
+- 上传完成后自动解析
+- 上传完成后自动入 Elasticsearch
+
+## 5. 当前数据模型建议
+
+### 5.1 `upload_tasks`
 
 ```text
 id
@@ -141,19 +136,22 @@ storage_provider
 bucket_name
 object_key
 file_type
-mime_type
+client_mime_type
+detected_mime_type
 file_size
-chunk_size
+part_size
 total_parts
 file_sha256
+storage_upload_id
 status
 completed_parts
 error_message
+created_by
 created_at
 updated_at
 ```
 
-`status` 建议：
+状态建议：
 
 ```text
 initiated
@@ -166,11 +164,11 @@ cancelled
 expired
 ```
 
-### 4.2 `upload_parts`
+### 5.2 `upload_parts`
 
 ```text
 id
-upload_id
+upload_task_id
 part_number
 etag
 part_size
@@ -180,49 +178,39 @@ created_at
 updated_at
 ```
 
-说明：
+这里字段命名固定使用：
 
-- 如果是 OSS/S3 multipart upload，分片上传成功后通常会返回 `etag`
-- 完成上传时要把所有 part 的 `part_number + etag` 回传给对象存储完成合并
+- `part_size`
+- `total_parts`
+- `part_number`
+- `etag`
 
-### 4.3 `documents`
+不使用 `upload chunk`，避免和 RAG 的文本 `chunk` 混淆。
 
-建议补字段：
+## 6. 当前对象路径规则
 
-```text
-storage_provider
-bucket_name
-object_key
-file_size
-file_sha256
-mime_type
-upload_status
-parse_status
-index_status
-error_message
-```
-
-不要只留一个笼统的 `status`。
-
-### 4.4 `index_jobs`
+对象路径由后端统一生成，禁止直接信任用户原始文件名：
 
 ```text
-id
-document_id
-knowledge_base_id
-job_type
-status
-current_step
-progress
-retry_count
-error_message
-created_at
-updated_at
+raw/dev/{knowledge_base_id}/{upload_id}/source.{extension}
 ```
 
-## 5. 推荐接口设计
+例如：
 
-### 5.1 初始化上传任务
+```text
+raw/dev/7/upl_a1b2c3d4e5f6a7b8/source.pdf
+```
+
+这样做的原因：
+
+- 路径规则稳定
+- 不泄漏用户原始文件名到对象路径
+- 避免特殊字符和路径穿越风险
+- 后续更方便按知识库和 upload_id 追溯
+
+## 7. API 方向
+
+### 7.1 初始化上传任务
 
 ```http
 POST /uploads/init
@@ -235,358 +223,141 @@ POST /uploads/init
   "knowledge_base_id": 7,
   "filename": "supplier-policy.pdf",
   "file_size": 734003200,
-  "file_sha256": "optional-full-file-hash",
-  "mime_type": "application/pdf"
+  "client_mime_type": "application/pdf",
+  "file_sha256": "optional",
+  "created_by": "alice"
 }
 ```
 
-返回：
+响应：
 
 ```json
 {
   "upload_id": "upl_xxx",
-  "storage_provider": "minio",
-  "bucket_name": "knowledge-raw-files",
-  "object_key": "raw/2026/07/upl_xxx/supplier-policy.pdf",
-  "chunk_size": 5242880,
-  "total_parts": 141
-}
-```
-
-### 5.2 获取分片上传凭证
-
-```http
-POST /uploads/{upload_id}/parts/presign
-```
-
-请求：
-
-```json
-{
-  "part_number": 1
-}
-```
-
-返回：
-
-```json
-{
-  "part_number": 1,
-  "upload_url": "presigned url ...",
-  "headers": {}
-}
-```
-
-### 5.3 上报分片完成
-
-```http
-POST /uploads/{upload_id}/parts/complete
-```
-
-请求：
-
-```json
-{
-  "part_number": 1,
-  "etag": "\"abc123\"",
+  "storage_provider": "aliyun-oss",
+  "bucket_name": "ai-knowledge-hub-xueyuan-dev",
+  "object_key": "raw/dev/7/upl_xxx/source.pdf",
   "part_size": 5242880,
-  "part_sha256": "optional"
+  "total_parts": 141,
+  "status": "initiated"
 }
 ```
 
-### 5.4 查询上传状态
+### 7.2 查询上传任务
 
 ```http
 GET /uploads/{upload_id}
 ```
 
-返回：
+返回当前任务元数据和状态，用于前端查询。
 
-```json
-{
-  "upload_id": "upl_xxx",
-  "status": "uploading",
-  "total_parts": 141,
-  "completed_parts": [1, 2, 3, 7],
-  "missing_parts": [4, 5, 6]
-}
-```
-
-### 5.5 完成上传
+### 7.3 完成上传
 
 ```http
 POST /uploads/{upload_id}/complete
 ```
 
-后端职责：
+Phase 1 先保留协议和状态入口，真实 multipart complete 放到 Phase 2。
 
-- 检查所有分片是否齐全
-- 调对象存储完成 multipart upload
-- 校验最终对象大小
-- 可选校验最终 sha256
-- 创建 `documents`
-- 把 `upload_task.status` 改成 `completed`
+## 8. Phase 2 当前已落地
 
-返回：
+当前仓库已经补上：
 
-```json
-{
-  "upload_id": "upl_xxx",
-  "document_id": 23,
-  "status": "completed"
-}
-```
+- `POST /uploads/{upload_id}/parts/presign`
+- `POST /uploads/{upload_id}/parts/complete`
+- `POST /uploads/{upload_id}/abort`
+- `GET /uploads/{upload_id}/parts`
+- 服务端基于 OSS `list parts` 做 part 级校验
+- 最终 `POST /uploads/{upload_id}/complete` 真正执行 multipart complete
+- 断点续传查询所需的 `local_parts / remote_parts / missing_part_numbers`
 
-### 5.6 创建索引任务
+这一阶段的重点不是“把文件内容传过来”，而是：
 
-```http
-POST /documents/{id}/index
-```
+- 前端直传 OSS
+- 后端只管上传控制面
+- 本地记录和 OSS 远端记录能对齐
 
-这里不直接同步做完，而是创建 `index_job`。
+## 9. Phase 3 当前已落地
 
-## 6. 安全要求
+当前仓库已经继续补上：
 
-企业版这里不能弱化。
+- `POST /uploads/{upload_id}/parts/presign-batch`
+- part 重试次数控制
+- 上传任务过期时间与清理接口
+- 上传完成后自动创建 `documents`
+- 上传完成后自动触发 parse / split / embed / index
+- 新增 `upload_processing_jobs` 表，把上传后处理单独记录成 job
+- `UploadTask.processing_status / processing_error_message / document_id`
 
-### 6.1 文件类型校验
+这一阶段的重点是：
 
-至少做四层：
+- 上传控制面继续留在 `/uploads`
+- 文档创建和索引流程开始自动化
+- 代码上把“上传完成”和“上传后处理”拆开
 
-- 扩展名白名单
-- MIME 校验
-- magic number 校验
-- 对 zip 容器类文件检查内部结构
+虽然当时还是同步执行后处理，但结构上已经不再和上传接口糊成一团。
 
-例子：
+## 10. 后续怎么走
 
-```text
-pdf -> %PDF
-docx -> ZIP + word/document.xml
-xlsx -> ZIP + xl/workbook.xml
-```
+### Phase 2
 
-### 6.2 文件名安全
+这一层现在已经完成，后面不再作为规划项。
 
-不要信任用户原始文件名作为真实存储路径。
+### Phase 3
 
-建议：
+这一层现在已经完成，后面不再作为规划项。
 
-```text
-展示名：original_filename
-存储键：系统生成 object_key
-```
+### Phase 4
 
-### 6.3 大小和复杂度限制
+当前仓库已经继续补上：
 
-建议限制：
+- `upload_processing_jobs` 真实迁到应用内异步 worker
+- 上传 complete 只负责入队，不同步跑 parse/index
+- 下载/解析阶段与索引阶段拆成两个并发池
+- 对象下载改为流式写本地 + 流式 SHA256
+- job 重试退避与告警状态字段
+- 文件类型探测和 magic number 校验
+- docx/xlsx 的基础 zip 恶意文件控制
+- 上传任务过期清理
+- 发起人活跃任务上限和日配额控制
+- 上传审计日志表
 
-- 单文件最大大小
-- PDF 最大页数
-- Excel 最大 sheet 数
-- 解压后最大体积
-- 解析后最大文本长度
+这一层现在已经落地，后面更值得继续做的是：
 
-### 6.4 异步解析隔离
+- 把完整阶段流水线迁移到真正独立进程 / MQ
+- 本地告警状态接入外部通知系统
+- 生命周期管理再细化到 OSS 对象和本地缓存清理策略
+- 更细粒度的租户级限流、配额和权限控制
 
-PDF / DOCX / XLSX 解析不要放在上传请求里。
+## 11. 当前结论
 
-要放到异步 worker，原因：
+当前项目如果要做成更像企业的版本，方向应该是：
 
-- 防止请求超时
-- 防止解析异常把上传接口拖死
-- 可以单独做超时、重试、限流
+- 上传走阿里云 OSS
+- PostgreSQL 继续保存任务和元数据
+- RabbitMQ + Celery 已接入 hello task 和 download 阶段真实消费，后续继续迁移完整上传流水线
+- FastAPI 只承担控制面，不承担大文件数据面
+- 解析和索引继续拆成后续阶段
 
-## 7. 资源和并发控制
+这也是本项目后续大文件上传改造的主线。
 
-企业版必须分池。
+## 12. Phase D 当前已落地
 
-### 7.1 上传并发池
-
-负责：
-
-- 初始化上传
-- 分片状态写库
-- 生成签名
-
-主要资源：
-
-- 轻量 CPU
-- DB
-- 少量网络
-
-### 7.2 处理并发池
-
-负责：
-
-- 拉对象
-- parse
-
-主要资源：
-
-- CPU
-- 内存
-- 磁盘临时空间
-
-### 7.3 索引并发池
-
-负责：
-
-- split
-- embedding
-- Elasticsearch 写入
-
-主要资源：
-
-- 模型服务 QPS / GPU
-- ES 写入吞吐
-
-建议分开限制：
+当前已经把完整处理流水线接到阶段级 job：
 
 ```text
-upload API 并发：高
-parse worker 并发：中低
-embedding worker 并发：低
+download -> validate -> parse -> split -> embed -> index
 ```
 
-不要用一个统一线程池。
+每个阶段都有独立 `upload_processing_jobs` 记录，并通过 `depends_on_job_id` 记录依赖。最终成功时：
 
-## 8. 推荐阶段执行
+- `documents.status = indexed`
+- `chunks.vector_id` 已回填
+- 每个阶段 job 为 `completed`
+- 失败阶段复用重试退避逻辑
 
-虽然目标直接按企业版，但实现仍然应该分阶段。
-
-### Phase 1：对象存储接入 + 上传任务模型
-
-目标：
-
-- 接 MinIO
-- 落 `upload_tasks` / `upload_parts`
-- 跑通 init / status / complete 接口骨架
-
-学习点：
-
-- 对象存储概念
-- presigned URL
-- upload task 状态机
-
-交付物：
-
-- `docs/large-file-upload/phase-01-object-storage-and-upload-contract.md`
-- 后端 upload API 骨架
-
-### Phase 2：分片上传 + 断点续传
-
-目标：
-
-- 前端按 part 上传
-- 后端记录 part 状态
-- 支持 missing parts 查询
-
-学习点：
-
-- multipart upload
-- 幂等
-- resume
-
-交付物：
-
-- `docs/large-file-upload/phase-02-multipart-upload-and-resume.md`
-
-### Phase 3：文档落库 + 状态拆分
-
-目标：
-
-- `documents` 增加对象存储字段
-- 拆 `upload_status / parse_status / index_status`
-
-学习点：
-
-- 状态机设计
-- 上传链路与业务链路解耦
-
-交付物：
-
-- `docs/large-file-upload/phase-03-document-status-model.md`
-
-### Phase 4：异步解析和索引任务
-
-目标：
-
-- 上传完成只创建 `document`
-- 索引走 `index_jobs`
-- 解析和 embedding 改成后台任务
-
-学习点：
-
-- job queue
-- worker
-- retry
-- progress
-
-交付物：
-
-- `docs/large-file-upload/phase-04-async-processing-and-index-jobs.md`
-
-### Phase 5：安全和治理
-
-目标：
-
-- MIME / magic number / zip 内部结构校验
-- 上传限制
-- 过期任务清理
-- 错误治理
-
-学习点：
-
-- 文件安全
-- 生命周期管理
-- 可观测性
-
-交付物：
-
-- `docs/large-file-upload/phase-05-security-and-governance.md`
-
-### Phase 6：生产级增强
-
-目标：
-
-- 限流
-- 生命周期策略
-- bucket 分层
-- 观测指标
-- 成本治理
-
-学习点：
-
-- S3/OSS 生命周期
-- 冷热分层
-- 企业运维视角
-
-交付物：
-
-- `docs/large-file-upload/phase-06-production-hardening.md`
-
-## 9. 当前项目的具体建议
-
-对于这个 RAG 项目，我建议直接这样定：
+详细说明见：
 
 ```text
-原始文件：对象存储
-上传方式：multipart upload
-上传完成后：只创建 document
-索引方式：异步 job
-向量写入：继续走 Elasticsearch
-```
-
-这是最像企业项目的组合。
-
-如果你后面面试表达，可以直接说：
-
-```text
-我把大文件上传设计成对象存储直传体系。前端先初始化 upload task，
-后端返回对象存储 multipart upload 所需的信息，前端直接按分片上传到对象存储。
-后端只负责状态、分片记录、完整性校验和文档元数据。
-上传完成后不会同步做解析和索引，而是创建后台 index job，由 worker 完成 parse、
-split、embedding 和 Elasticsearch 写入。这样上传流量不会压垮业务服务，
-同时支持断点续传、失败恢复、状态跟踪和资源隔离。
+docs/large-file-upload/phase-07-full-processing-pipeline.md
 ```
