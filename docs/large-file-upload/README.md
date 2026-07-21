@@ -6,11 +6,16 @@
 
 - 先读路线图：
   - [enterprise-upload-roadmap.md](./enterprise-upload-roadmap.md)
-- 再按阶段往这个目录继续补学习文档：
-  - `phase-01-object-storage-and-upload-contract.md`
-  - `phase-02-multipart-upload-and-resume.md`
-  - `phase-03-async-processing-and-resource-control.md`
-  - `phase-04-security-and-governance.md`
+- 再读当前已落地的 Phase 1 设计说明：
+  - [phase-01-object-storage-and-upload-contract.md](./phase-01-object-storage-and-upload-contract.md)
+- 再读当前已落地的 Phase 2 设计说明：
+  - [phase-02-multipart-upload-and-resume.md](./phase-02-multipart-upload-and-resume.md)
+- 再读当前已落地的 Phase 3 设计说明：
+  - [phase-03-post-upload-processing-and-control.md](./phase-03-post-upload-processing-and-control.md)
+- 再读当前已落地的 Phase 4 设计说明：
+  - [phase-04-security-and-governance.md](./phase-04-security-and-governance.md)
+- 再读当前已落地的 RabbitMQ + Celery 基础接入说明：
+  - [phase-05-rabbitmq-celery-foundation.md](./phase-05-rabbitmq-celery-foundation.md)
 
 当前这份路线图的前提是：
 

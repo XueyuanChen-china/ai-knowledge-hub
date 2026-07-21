@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 .env
+backend/.env
 frontend/.env.local
 frontend/node_modules/
 frontend/dist/
@@ -14,3 +15,4 @@ frontend/.next/
 backend/data/sqlite/
 backend/data/uploads/*
 !backend/data/uploads/.gitkeep
+backend/tests/fixtures/large_file_upload/sample_large_policy.txt
