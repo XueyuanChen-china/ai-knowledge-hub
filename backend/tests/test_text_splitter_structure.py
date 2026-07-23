@@ -919,6 +919,29 @@ B内容。
         self.assertIn("IT设备采购和供应商管理需要同步留痕。", text)
         self.assertIn("2. 权限模型应复核。", text)
 
+    def test_build_pdf_paragraph_text_preserves_english_sentence_space(self) -> None:
+        lines = [
+            PdfLayoutLine(
+                text="Reviewers must check status.",
+                page_number=1,
+                bbox=[72, 100, 300, 112],
+                avg_font_size=10,
+                column_index=0,
+            ),
+            PdfLayoutLine(
+                text="Only active records can enter retrieval.",
+                page_number=1,
+                bbox=[72, 116, 300, 128],
+                avg_font_size=10,
+                column_index=0,
+            ),
+        ]
+
+        self.assertEqual(
+            build_pdf_paragraph_text(lines),
+            "Reviewers must check status. Only active records can enter retrieval.",
+        )
+
     def test_pdf_noise_paragraph_detects_short_fragment(self) -> None:
         self.assertTrue(is_probable_pdf_noise_paragraph("、表格识别与页脚去噪。"))
         self.assertFalse(is_probable_pdf_noise_paragraph("审批记录需要保留申请人、审批链和附件。"))

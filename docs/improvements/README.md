@@ -15,3 +15,6 @@
 - [Retrieval Quality Improvements](./retrieval-quality-improvements.md)
 - [Knowledge Base Deletion Safeguards](./knowledge-base-deletion-safeguards.md)
 - [Large File Upload Roadmap](./large-file-upload-roadmap.md)
+- [LLM API Reliability Roadmap](./llm-api-reliability-roadmap.md)
+- [Internship Enterprise Readiness Roadmap](./internship-enterprise-readiness-roadmap.md)
+- [U1：测试基线与回归测试](./enterprise-readiness/u1-testing-baseline.md)
