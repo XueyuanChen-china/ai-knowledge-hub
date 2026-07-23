@@ -198,6 +198,15 @@ class Settings(BaseSettings):
     celery_result_backend: str = ""
     celery_task_default_queue: str = "ai_knowledge_hub"
 
+    # RabbitMQ publisher confirm。Producer 发布后等待 Broker 返回确认，
+    # 未确认时 apply_async 会抛出异常，调用方可以保留 job 为待投递状态并重试。
+    celery_publisher_confirm: bool = True
+
+    # 终态失败消息使用的死信交换机和队列。
+    celery_dead_letter_exchange: str = "ai_knowledge_hub.dlx"
+    celery_dead_letter_queue: str = "ai_knowledge_hub.dead"
+    celery_dead_letter_routing_key: str = "dead"
+
     # 告诉 pydantic-settings 从 backend/.env 文件读取配置。
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
