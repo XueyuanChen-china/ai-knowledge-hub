@@ -2,13 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.chat import router as chat_router
+from app.api.auth import router as auth_router
 from app.api.document import router as document_router
 from app.api.knowledge_base import router as knowledge_base_router
 from app.api.knowledge_item import router as knowledge_item_router
 from app.api.search import router as search_router
 from app.api.upload import router as upload_router
 from app.config import get_cors_allow_origins, get_settings
-from app.db.database import create_db_and_tables
+from app.db.database import check_database_ready
 from app.services.upload_worker import get_upload_processing_worker_manager
 
 # 读取项目配置，例如应用名称、数据库地址等。
@@ -31,6 +32,9 @@ app.add_middleware(
 # 注册知识库 CRUD 路由。
 # 注册后，Swagger 里会出现 /knowledge-bases 相关接口。
 app.include_router(knowledge_base_router)
+
+# 注册登录和当前用户接口。管理员必须由显式 seed 脚本创建。
+app.include_router(auth_router)
 
 # 注册知识条目 CRUD 路由。
 # 注册后，Swagger 里会出现 /knowledge-items 相关接口。
@@ -57,11 +61,11 @@ app.include_router(chat_router)
 def on_startup() -> None:
     """应用启动时执行的初始化逻辑。
 
-    当前只做一件事：根据 SQLModel 模型创建数据库表。
-    后续如果要做 Elasticsearch 连通性检查、预热 Embedding 模型，也可以放在这里或拆到独立模块。
+    当前只检查 PostgreSQL 连接和 Alembic revision。
+    数据库结构必须由发布流程显式执行 Alembic，应用启动不会自动改表。
     """
 
-    create_db_and_tables()
+    check_database_ready()
     if settings.upload_worker_enabled:
         get_upload_processing_worker_manager().start(settings)
 

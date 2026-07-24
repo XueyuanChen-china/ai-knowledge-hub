@@ -12,6 +12,7 @@ import {
   Text,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
+import { useNavigate } from "react-router-dom";
 import {
   IconBrain,
   IconDatabase,
@@ -19,7 +20,10 @@ import {
   IconFileUpload,
   IconLayoutDashboard,
   IconMessageCircle,
+  IconLogout,
 } from "@tabler/icons-react";
+import { Button } from "@mantine/core";
+import { clearAuthSession } from "@/lib/api/client";
 
 const NAV_ITEMS = [
   { href: "/", label: "总览", icon: IconLayoutDashboard },
@@ -34,6 +38,7 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
   const [opened, { toggle }] = useDisclosure();
   // pathname 用来给当前路由高亮对应导航项。
   const pathname = usePathname();
+  const navigate = useNavigate();
 
   function isActivePath(href: string) {
     if (href === "/") {
@@ -64,9 +69,23 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
               </div>
             </Group>
           </Group>
-          <Badge variant="light" color="blue">
-            Week 4
-          </Badge>
+          <Group gap="sm">
+            <Badge variant="light" color="blue">
+              Week 4
+            </Badge>
+            <Button
+              variant="subtle"
+              color="gray"
+              size="compact-sm"
+              leftSection={<IconLogout size={15} />}
+              onClick={() => {
+                clearAuthSession();
+                navigate("/login", { replace: true });
+              }}
+            >
+              退出登录
+            </Button>
+          </Group>
         </Group>
       </AppShell.Header>
 

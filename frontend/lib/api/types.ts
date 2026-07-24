@@ -6,6 +6,34 @@ export interface KnowledgeBase {
   updated_at: string;
 }
 
+export interface AuthUser {
+  id: number;
+  email: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AuthOrganization {
+  id: number;
+  name: string;
+  slug: string;
+}
+
+export interface AuthTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: AuthUser;
+  organization: AuthOrganization;
+  role: string;
+}
+
+export interface AuthMeResponse {
+  user: AuthUser;
+  organization: AuthOrganization;
+  role: string;
+}
+
 export interface KnowledgeBasePayload {
   name: string;
   description: string;

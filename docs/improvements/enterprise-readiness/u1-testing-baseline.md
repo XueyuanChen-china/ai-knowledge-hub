@@ -134,25 +134,25 @@ npm run build
 
 ## 六、本次 U1 的实际结果
 
-| 主线 | 要证明什么 | 证据位置 |
-| --- | --- | --- |
-| 可信回答 | 文档解析、切分、检索、引用和人工审核能形成闭环 | splitter 回归、retrieval evaluation、Chat E2E |
-| 安全边界 | 用户只能访问自己有权限的知识库和检索证据 | auth/RBAC、SQL/ES/OSS/Chat 负向测试 |
-| 可重复交付 | 新环境可以启动、迁移、测试并运行完整链路 | README、Compose、CI、migration、运行手册 |
+| 主线       | 要证明什么                                     | 证据位置                                      |
+| ---------- | ---------------------------------------------- | --------------------------------------------- |
+| 可信回答   | 文档解析、切分、检索、引用和人工审核能形成闭环 | splitter 回归、retrieval evaluation、Chat E2E |
+| 安全边界   | 用户只能访问自己有权限的知识库和检索证据       | auth/RBAC、SQL/ES/OSS/Chat 负向测试           |
+| 可重复交付 | 新环境可以启动、迁移、测试并运行完整链路       | README、Compose、CI、migration、运行手册      |
 
 ## 当前基线
 
 更新时间：2026-07-23
 
-| 检查项 | 当前结果 | 备注 |
-| --- | --- | --- |
-| splitter 回归测试 | 已通过 | 覆盖 Markdown、TXT、CSV、DOCX、XLSX、PDF |
-| 后端全量测试 | 通过：131 tests | PostgreSQL 测试环境；有依赖库 warning，但无失败 |
-| 前端 lint | 通过 | ESLint 无 error、无 warning |
-| 前端 production build | 通过，有告警 | 主 JS chunk 约 564.80 kB，后续由 U9 做路由拆包 |
-| Docker Compose | 待 U6 | 当前只保留分服务本地启动脚本 |
-| 身份与权限 | 待 U3/U4 | 当前接口仍以资源 ID 和知识库存在性为主 |
-| LangGraph checkpoint | 待 U5 | 当前实现仍是内存 checkpoint |
+| 检查项                | 当前结果        | 备注                                            |
+| --------------------- | --------------- | ----------------------------------------------- |
+| splitter 回归测试     | 已通过          | 覆盖 Markdown、TXT、CSV、DOCX、XLSX、PDF        |
+| 后端全量测试          | 通过：131 tests | PostgreSQL 测试环境；有依赖库 warning，但无失败 |
+| 前端 lint             | 通过            | ESLint 无 error、无 warning                     |
+| 前端 production build | 通过，有告警    | 主 JS chunk 约 564.80 kB，后续由 U9 做路由拆包  |
+| Docker Compose        | 待 U6           | 当前只保留分服务本地启动脚本                    |
+| 身份与权限            | 待 U3/U4        | 当前接口仍以资源 ID 和知识库存在性为主          |
+| LangGraph checkpoint  | 待 U5           | 当前实现仍是内存 checkpoint                     |
 
 ## U1：Splitter 回归证据
 

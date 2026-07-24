@@ -286,7 +286,7 @@ flowchart LR
 - 测试不得依赖个人阿里云 OSS、真实 Qwen key 或长期运行的共享 Elasticsearch 索引。
 - 不用更新快照来代替解释 splitter 行为变化。
 - `frontend/app/**/page.tsx` 是当前 Vite 项目沿用的页面目录约定，不代表重新引入 Next.js。
-- `docs/improvements/enterprise-readiness/u1-testing-baseline.md` 从 U1 建立学习和证据骨架，后续每个单元在同一目录下增加独立阶段文档。
+- `docs/operations/enterprise-readiness-evidence.md` 从 U1 建立骨架，后续每个单元持续补证据，不等 U10 才开始整理演示材料。
 
 ## Implementation Units
 
@@ -319,7 +319,7 @@ flowchart LR
 - `backend/app/services/document_splitter/parsers/pdf_layout_parser.py`
 - `README.md`
 - `docs/README.md`
-- `docs/improvements/enterprise-readiness/u1-testing-baseline.md`
+- `docs/operations/enterprise-readiness-evidence.md`
 
 **Approach:**
 

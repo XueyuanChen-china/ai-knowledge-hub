@@ -1,11 +1,22 @@
-from sqlalchemy import inspect, text
+"""PostgreSQL 连接和会话管理。
+
+表结构由 Alembic 管理。本模块不再在应用启动时调用 ``create_all`` 或执行
+``ALTER TABLE``，避免不同实例在启动时偷偷修改生产 schema。
+"""
+
+from pathlib import Path
+from typing import Optional
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, create_engine
 
 from app.config import get_settings
 
-# 这里导入 models 的目的不是直接使用变量，而是让 SQLModel 注册所有表模型。
-# 如果不导入，SQLModel.metadata 可能不知道有哪些表需要创建。
+# 导入 models 的目的不是直接使用变量，而是让 SQLModel 注册所有表模型，
+# 这样 Alembic env.py 才能拿到完整的 SQLModel.metadata。
 from app.db import models  # noqa: F401
 
 POSTGRESQL_PREFIXES = (
@@ -13,6 +24,9 @@ POSTGRESQL_PREFIXES = (
     "postgresql+psycopg://",
     "postgresql+psycopg2://",
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ALEMBIC_CONFIG_PATH = PROJECT_ROOT / "alembic.ini"
 
 settings = get_settings()
 
@@ -45,251 +59,61 @@ def build_engine(database_url: str) -> Engine:
     )
 
 
-# engine 是应用连接数据库的核心对象。
-# 后续所有 Session 都会基于这个 engine 创建。
+# engine 是应用连接数据库的核心对象，所有请求 Session 都基于它创建。
 engine = build_engine(settings.database_url)
 
 
-def create_db_and_tables() -> None:
-    """在 PostgreSQL 中创建缺失的数据表。"""
+def _get_alembic_script_directory() -> ScriptDirectory:
+    """读取本地迁移脚本目录，得到当前代码声明的 head revision。"""
 
-    SQLModel.metadata.create_all(engine)
-    ensure_document_columns(engine)
-    ensure_conversation_columns(engine)
-    ensure_upload_task_columns(engine)
-    ensure_upload_part_columns(engine)
-    ensure_upload_processing_job_columns(engine)
-    ensure_chunk_columns(engine)
+    config = Config(str(ALEMBIC_CONFIG_PATH))
+    return ScriptDirectory.from_config(config)
 
 
-def ensure_chunk_columns(current_engine: Engine) -> None:
-    """补齐 chunks 的阶段级 embedding 暂存字段。"""
+def get_current_database_revision(current_engine: Engine = engine) -> Optional[str]:
+    """读取数据库已经执行到的 Alembic revision。"""
 
-    inspector = inspect(current_engine)
-    if "chunks" not in inspector.get_table_names():
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("chunks")}
-    if "embedding_json" in columns:
-        return
-
-    with current_engine.begin() as connection:
-        connection.execute(
-            text("ALTER TABLE chunks ADD COLUMN embedding_json TEXT NOT NULL DEFAULT ''")
-        )
+    with current_engine.connect() as connection:
+        return connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one_or_none()
 
 
-def ensure_document_columns(current_engine: Engine) -> None:
-    """补齐开发期遗留的 documents 字段。
+def get_expected_database_revision() -> str:
+    """读取当前代码中的最新迁移 revision。"""
 
-    create_all 只会创建不存在的表，不会自动给已有表添加新字段。
-    这里继续保留一次兼容补列逻辑，避免旧 PostgreSQL 库缺字段时直接启动失败。
+    head = _get_alembic_script_directory().get_current_head()
+    if head is None:
+        raise RuntimeError("No Alembic head revision is configured")
+    return head
+
+
+def check_database_ready(current_engine: Engine = engine) -> None:
+    """验证数据库可连接且 revision 与代码一致。
+
+    这里故意不执行迁移。revision 落后时必须由发布流程显式执行
+    ``alembic upgrade head``，应用只给出明确错误。
     """
 
-    inspector = inspect(current_engine)
-    if "documents" not in inspector.get_table_names():
-        return
+    try:
+        with current_engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+            current_revision = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one_or_none()
+    except Exception as exc:  # pragma: no cover - 由真实数据库连接失败触发
+        raise RuntimeError(
+            "Database is not ready. Run 'alembic upgrade head' and check the "
+            "PostgreSQL connection."
+        ) from exc
 
-    columns = {column["name"] for column in inspector.get_columns("documents")}
-    if "extracted_text" in columns:
-        return
-
-    with current_engine.begin() as connection:
-        connection.execute(
-            text("ALTER TABLE documents ADD COLUMN extracted_text TEXT DEFAULT ''")
+    expected_revision = get_expected_database_revision()
+    if current_revision != expected_revision:
+        raise RuntimeError(
+            "Database revision is out of date: "
+            f"current={current_revision!r}, expected={expected_revision!r}. "
+            "Run 'alembic upgrade head' before starting the application."
         )
-
-
-def ensure_conversation_columns(current_engine: Engine) -> None:
-    """补齐开发期新增的 conversations 字段。"""
-
-    inspector = inspect(current_engine)
-    if "conversations" not in inspector.get_table_names():
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("conversations")}
-    if "is_pinned" in columns:
-        return
-
-    with current_engine.begin() as connection:
-        connection.execute(
-            text(
-                "ALTER TABLE conversations "
-                "ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT FALSE"
-            )
-        )
-
-
-def ensure_upload_task_columns(current_engine: Engine) -> None:
-    """补齐 upload_tasks 的新增字段。"""
-
-    inspector = inspect(current_engine)
-    if "upload_tasks" not in inspector.get_table_names():
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("upload_tasks")}
-    statements: list[str] = []
-
-    if "expires_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_tasks "
-            "ADD COLUMN expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()"
-        )
-    if "auto_create_document" not in columns:
-        statements.append(
-            "ALTER TABLE upload_tasks "
-            "ADD COLUMN auto_create_document BOOLEAN NOT NULL DEFAULT TRUE"
-        )
-    if "auto_index_on_complete" not in columns:
-        statements.append(
-            "ALTER TABLE upload_tasks "
-            "ADD COLUMN auto_index_on_complete BOOLEAN NOT NULL DEFAULT TRUE"
-        )
-    if "document_id" not in columns:
-        statements.append(
-            "ALTER TABLE upload_tasks "
-            "ADD COLUMN document_id INTEGER NULL"
-        )
-    if "processing_status" not in columns:
-        statements.append(
-            "ALTER TABLE upload_tasks "
-            "ADD COLUMN processing_status VARCHAR(50) NOT NULL DEFAULT ''"
-        )
-    if "processing_error_message" not in columns:
-        statements.append(
-            "ALTER TABLE upload_tasks "
-            "ADD COLUMN processing_error_message TEXT NOT NULL DEFAULT ''"
-        )
-
-    if not statements:
-        return
-
-    with current_engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
-
-
-def ensure_upload_part_columns(current_engine: Engine) -> None:
-    """补齐 upload_parts 的新增字段。"""
-
-    inspector = inspect(current_engine)
-    if "upload_parts" not in inspector.get_table_names():
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("upload_parts")}
-    statements: list[str] = []
-
-    if "retry_count" not in columns:
-        statements.append(
-            "ALTER TABLE upload_parts "
-            "ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
-        )
-    if "last_error_message" not in columns:
-        statements.append(
-            "ALTER TABLE upload_parts "
-            "ADD COLUMN last_error_message TEXT NOT NULL DEFAULT ''"
-        )
-
-    if not statements:
-        return
-
-    with current_engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
-
-
-def ensure_upload_processing_job_columns(current_engine: Engine) -> None:
-    """补齐 upload_processing_jobs 的新增字段。"""
-
-    inspector = inspect(current_engine)
-    if "upload_processing_jobs" not in inspector.get_table_names():
-        return
-
-    columns = {column["name"] for column in inspector.get_columns("upload_processing_jobs")}
-    statements: list[str] = []
-
-    if "max_retry_count" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN max_retry_count INTEGER NOT NULL DEFAULT 3"
-        )
-    if "stage" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN stage VARCHAR(50) NOT NULL DEFAULT 'download'"
-        )
-    if "depends_on_job_id" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN depends_on_job_id INTEGER NULL"
-        )
-    if "attempt_count" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
-        )
-    if "max_attempts" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3"
-        )
-    if "celery_task_id" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN celery_task_id VARCHAR(255) NOT NULL DEFAULT ''"
-        )
-    if "next_run_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN next_run_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()"
-        )
-    if "claim_token" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN claim_token VARCHAR(64) NOT NULL DEFAULT ''"
-        )
-    if "locked_by" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN locked_by VARCHAR(100) NOT NULL DEFAULT ''"
-        )
-    if "claimed_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN claimed_at TIMESTAMP WITHOUT TIME ZONE NULL"
-        )
-    if "lease_expires_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN lease_expires_at TIMESTAMP WITHOUT TIME ZONE NULL"
-        )
-    if "started_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN started_at TIMESTAMP WITHOUT TIME ZONE NULL"
-        )
-    if "completed_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN completed_at TIMESTAMP WITHOUT TIME ZONE NULL"
-        )
-    if "last_alert_at" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN last_alert_at TIMESTAMP WITHOUT TIME ZONE NULL"
-        )
-    if "alert_status" not in columns:
-        statements.append(
-            "ALTER TABLE upload_processing_jobs "
-            "ADD COLUMN alert_status VARCHAR(50) NOT NULL DEFAULT ''"
-        )
-
-    if not statements:
-        return
-
-    with current_engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
 
 
 def get_session():

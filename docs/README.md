@@ -28,3 +28,5 @@ Day 文档记录从后端基础、数据库、文档解析、RAG、LangGraph 到
 - [消息队列与 Celery](message-queue/README.md)
 - [多格式切分设计](multi-format-splitter-roadmap.md)
 - [切分代码讲解](text-splitter-code-walkthrough.md)
+- [PostgreSQL 数据库迁移](operations/database-migrations.md)
+- [U3：用户、组织与 RBAC](improvements/enterprise-readiness/u3-auth-rbac.md)

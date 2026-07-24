@@ -5,6 +5,53 @@ from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
+class Organization(SQLModel, table=True):
+    """组织表。
+
+    U3 先建立身份边界，U4 再把知识库、文档等存量资源补上组织归属。
+    """
+
+    __tablename__ = "organizations"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=100)
+    slug: str = Field(index=True, unique=True, max_length=100)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class User(SQLModel, table=True):
+    """用户表，只保存 Argon2 密码哈希，不保存明文密码。"""
+
+    __tablename__ = "users"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True, unique=True, max_length=320)
+    password_hash: str = Field(max_length=255)
+    is_active: bool = Field(default=True, index=True)
+    last_login_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OrganizationMembership(SQLModel, table=True):
+    """用户和组织的多对多关系，以及用户在组织中的角色。"""
+
+    __tablename__ = "organization_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "user_id",
+            name="uq_organization_memberships_organization_user",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    role: str = Field(default="viewer", index=True, max_length=50)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class KnowledgeBase(SQLModel, table=True):
     """知识库表。
 

@@ -29,6 +29,28 @@ class Settings(BaseSettings):
     # 当前项目统一使用 PostgreSQL，不再保留 SQLite 运行时支持。
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ai_knowledge_hub"
 
+    # JWT 签名密钥只从环境变量读取；生产环境必须显式配置，不能使用代码默认值。
+    auth_jwt_secret: str = Field(
+        default="",
+        validation_alias="AUTH_JWT_SECRET",
+    )
+
+    # JWT 的发行者和受众，防止一个服务签发的 token 被另一个服务误接受。
+    auth_jwt_issuer: str = "ai-knowledge-hub"
+    auth_jwt_audience: str = "ai-knowledge-hub-web"
+
+    # access token 短时有效，长期登录状态后续再接 refresh token 体系。
+    auth_access_token_ttl_seconds: int = 15 * 60
+
+    # 登录接口的单进程失败限流。多副本分布式限流留到集群阶段。
+    auth_login_rate_limit_max_attempts: int = 5
+    auth_login_rate_limit_window_seconds: int = 60
+    auth_login_failure_backoff_base_seconds: float = 0.5
+
+    # 默认组织由 identity migration 创建，管理员必须由显式 seed 脚本创建。
+    auth_default_organization_slug: str = "default"
+    auth_default_organization_name: str = "Default Organization"
+
     # Elasticsearch 连接地址。默认先按本地开发的单节点服务处理。
     elasticsearch_url: str = "http://localhost:9200"
 
@@ -211,6 +233,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
+        populate_by_name=True,
         # .env 里如果临时多写了其他字段，不让程序直接报错。
         extra="ignore",
     )
