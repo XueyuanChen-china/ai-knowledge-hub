@@ -1,6 +1,9 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
 
 import HomePage from "@/app/page";
+import LoginPage from "@/app/login/page";
+import AccountPage from "@/app/account/page";
+import UserManagementPage from "@/app/admin/users/page";
 import ChatPage from "@/app/chat/page";
 import DocumentsPage from "@/app/documents/page";
 import KnowledgeBaseDetailPage from "@/app/knowledge-bases/[id]/page";
@@ -8,6 +11,7 @@ import KnowledgeBasesPage from "@/app/knowledge-bases/page";
 import KnowledgeItemDetailPage from "@/app/knowledge-items/[id]/page";
 import SearchPage from "@/app/search/page";
 import { AppFrame } from "@/components/app-frame";
+import { AuthGate } from "@/components/auth-gate";
 import { PageHeader } from "@/components/page-header";
 import { Card, Stack, Text } from "@mantine/core";
 
@@ -36,7 +40,14 @@ export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route element={<ShellLayout />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          element={
+            <AuthGate>
+              <ShellLayout />
+            </AuthGate>
+          }
+        >
           <Route path="/" element={<HomePage />} />
           <Route path="/knowledge-bases" element={<KnowledgeBasesPage />} />
           <Route
@@ -50,6 +61,8 @@ export function AppRouter() {
           <Route path="/documents" element={<DocumentsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/account" element={<AccountPage />} />
+          <Route path="/admin/users" element={<UserManagementPage />} />
           <Route path="/index.html" element={<Navigate to="/" replace />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

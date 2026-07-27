@@ -444,7 +444,6 @@ export default function ChatPage() {
   const [response, setResponse] = useState<ChatRunResponse | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [conversationId, setConversationId] = useState<number | null>(null);
   const [pendingReview, setPendingReview] = useState<ChatRunResponse | null>(
     null,
   );
@@ -572,7 +571,6 @@ export default function ChatPage() {
       setError("");
       const historyMessages = await getConversationMessages(conversation.id);
       setSelectedConversationId(conversation.id);
-      setConversationId(conversation.id);
       setThreadId(conversation.thread_id);
       setPendingReview(null);
       setReviewNote("");
@@ -594,7 +592,6 @@ export default function ChatPage() {
 
   function handleStartNewConversation() {
     setSelectedConversationId(null);
-    setConversationId(null);
     setThreadId(null);
     setResponse(null);
     setMessages([]);
@@ -781,7 +778,6 @@ export default function ChatPage() {
 
   function handleStartEvent(event: ChatStreamStartEvent) {
     setThreadId(event.thread_id);
-    setConversationId(event.conversation_id ?? null);
     setLiveRunState((current) => ({
       ...current,
       status: "streaming",
@@ -834,7 +830,6 @@ export default function ChatPage() {
   function handleTerminalEvent(result: ChatRunResponse) {
     setResponse(result);
     setThreadId(result.thread_id);
-    setConversationId(result.conversation_id);
     setLiveRunState({
       status: result.status === "interrupted" ? "interrupted" : "completed",
       currentNode: "",
@@ -1438,6 +1433,11 @@ export default function ChatPage() {
                       >
                         {effectiveRelevanceDecision}
                       </Badge>
+                      {effectiveReviewReason !== "-" ? (
+                        <Text size="xs" c="dimmed" mt={4}>
+                          {effectiveReviewReason}
+                        </Text>
+                      ) : null}
                     </Timeline.Item>
                     <Timeline.Item title="answer" bullet={<IconRobot size={12} />}>
                       <Text size="xs" c="dimmed">

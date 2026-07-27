@@ -4,6 +4,8 @@ import type {
   ChatStreamEventName,
   ChatStreamNodeEvent,
   ChatStreamStartEvent,
+  AuthMeResponse,
+  AuthTokenResponse,
   ChunkRecord,
   ConversationMessage,
   ConversationSummary,
@@ -16,12 +18,19 @@ import type {
   KnowledgeItemChunkResponse,
   KnowledgeItemIndexResponse,
   KnowledgeItemPayload,
+  MemberCreatePayload,
+  OrganizationMember,
+  OrganizationRole,
+  SecurityAuditLogListResponse,
   SemanticSearchResult,
 } from "@/lib/api/types";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8000";
+
+const ACCESS_TOKEN_STORAGE_KEY = "ai-knowledge-hub.access-token";
+const AUTH_EXPIRED_EVENT = "ai-knowledge-hub.auth-expired";
 
 // 统一的前端请求错误类型，后面页面里可以直接拿到状态码和提示文案。
 class ApiError extends Error {
@@ -33,9 +42,30 @@ class ApiError extends Error {
   }
 }
 
+export function getAuthToken(): string | null {
+  return sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+}
+
+export function setAuthToken(token: string): void {
+  sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+}
+
+export function clearAuthSession(): void {
+  sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+}
+
+function notifyAuthExpired(): void {
+  clearAuthSession();
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // 用 Headers 包一下，方便后面按需补充 Content-Type 等请求头。
   const headers = new Headers(init?.headers);
+  const token = getAuthToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
   // FormData 让浏览器自己带 multipart boundary，只有普通 JSON body 才手动补头。
   if (
     init?.body &&
@@ -52,6 +82,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      notifyAuthExpired();
+    }
     // 后端大多数错误会返回 {"detail": "..."}，这里优先把 detail 提出来给页面展示。
     let detail = response.statusText;
     try {
@@ -162,17 +195,25 @@ async function streamRequest(
     data: ChatStreamEventData,
   ) => void | Promise<void>,
 ): Promise<void> {
+  const headers = new Headers({
+    Accept: "text/event-stream",
+    "Content-Type": "application/json",
+  });
+  const token = getAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
-    headers: {
-      Accept: "text/event-stream",
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(payload),
     cache: "no-store",
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      notifyAuthExpired();
+    }
     throw new ApiError(await readErrorDetail(response), response.status);
   }
 
@@ -212,6 +253,108 @@ async function streamRequest(
       await onEvent(parsed.event, parsed.data);
     }
   }
+}
+
+export async function login(
+  email: string,
+  password: string,
+): Promise<AuthTokenResponse> {
+  // 登录请求故意不依赖已有 token，成功后才写入当前标签页 sessionStorage。
+  return request<AuthTokenResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function getCurrentUser(): Promise<AuthMeResponse> {
+  return request<AuthMeResponse>("/api/auth/me");
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await request<void>("/api/auth/logout", { method: "POST" });
+  } finally {
+    // 即使 Redis 暂时不可用，也清理本地 token，避免当前页面继续带着旧凭证请求。
+    clearAuthSession();
+  }
+}
+
+export async function getOrganizationMembers(): Promise<OrganizationMember[]> {
+  return request<OrganizationMember[]>("/api/admin/users");
+}
+
+export async function createOrganizationMember(
+  payload: MemberCreatePayload,
+): Promise<OrganizationMember> {
+  return request<OrganizationMember>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrganizationMemberRole(
+  userId: number,
+  role: OrganizationRole,
+): Promise<OrganizationMember> {
+  return request<OrganizationMember>(`/api/admin/users/${userId}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function updateOrganizationMemberStatus(
+  userId: number,
+  isActive: boolean,
+): Promise<OrganizationMember> {
+  return request<OrganizationMember>(`/api/admin/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+export async function resetOrganizationMemberPassword(
+  userId: number,
+  newPassword: string,
+): Promise<void> {
+  return request<void>(`/api/admin/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+}
+
+export async function removeOrganizationMember(userId: number): Promise<void> {
+  return request<void>(`/api/admin/users/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getSecurityAuditLogs(
+  offset = 0,
+  limit = 50,
+): Promise<SecurityAuditLogListResponse> {
+  return request<SecurityAuditLogListResponse>(
+    `/api/admin/audit-logs?offset=${offset}&limit=${limit}`,
+  );
+}
+
+export async function changeCurrentPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request<void>("/api/account/change-password", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  // 修改密码会让服务端递增 token_version，当前 token 已不再有效。
+  clearAuthSession();
+}
+
+export async function logoutAllDevices(): Promise<void> {
+  await request<void>("/api/account/logout-all", { method: "POST" });
+  clearAuthSession();
 }
 
 export async function getKnowledgeBases(): Promise<KnowledgeBase[]> {

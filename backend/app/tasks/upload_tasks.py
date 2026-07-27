@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from celery.exceptions import Reject
 from sqlmodel import Session
 
 from app.celery_app import celery_app
@@ -73,6 +74,13 @@ def upload_download_stage_task(self, job_id: int) -> dict[str, object]:
             exc=RuntimeError(result.processing_error_message),
             countdown=max(1, settings.upload_job_retry_backoff_seconds),
         )
+    if result.processing_status == "failed":
+        # 业务重试已经耗尽。明确 reject 且不重新入主队列，让 RabbitMQ
+        # 根据主队列的 DLX 配置把原始消息转入死信队列，方便排查。
+        raise Reject(
+            result.processing_error_message or "download stage failed",
+            requeue=False,
+        )
     return {
         "job_id": result.processing_job_id,
         "stage": "download",
@@ -98,6 +106,11 @@ def _run_pipeline_stage_task(self, job_id: int, stage: str) -> dict[str, object]
         raise self.retry(
             exc=RuntimeError(result.processing_error_message),
             countdown=max(1, settings.upload_job_retry_backoff_seconds),
+        )
+    if result.processing_status == "failed":
+        raise Reject(
+            result.processing_error_message or f"{stage} stage failed",
+            requeue=False,
         )
     return {
         "job_id": result.processing_job_id,

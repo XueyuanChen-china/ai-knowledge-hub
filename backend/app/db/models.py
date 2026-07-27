@@ -5,6 +5,84 @@ from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
+class Organization(SQLModel, table=True):
+    """组织表。
+
+    U3 先建立身份边界，U4 再把知识库、文档等存量资源补上组织归属。
+    """
+
+    __tablename__ = "organizations"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=100)
+    slug: str = Field(index=True, unique=True, max_length=100)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class User(SQLModel, table=True):
+    """用户表，只保存 Argon2 密码哈希，不保存明文密码。"""
+
+    __tablename__ = "users"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True, unique=True, max_length=320)
+    password_hash: str = Field(max_length=255)
+    is_active: bool = Field(default=True, index=True)
+    # 修改密码或“退出所有设备”时递增；JWT 中版本不一致的 token 会立即失效。
+    token_version: int = Field(default=0)
+    last_login_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OrganizationMembership(SQLModel, table=True):
+    """用户和组织的多对多关系，以及用户在组织中的角色。"""
+
+    __tablename__ = "organization_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "user_id",
+            name="uq_organization_memberships_organization_user",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    role: str = Field(default="viewer", index=True, max_length=50)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SecurityAuditLog(SQLModel, table=True):
+    """身份与账号管理安全审计日志。
+
+    审计表只记录动作、对象和必要上下文，不保存密码、JWT、API Key 等敏感值。
+    """
+
+    __tablename__ = "security_audit_logs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    organization_id: Optional[int] = Field(
+        default=None,
+        foreign_key="organizations.id",
+        index=True,
+    )
+    actor_user_id: Optional[int] = Field(
+        default=None,
+        foreign_key="users.id",
+        index=True,
+    )
+    action: str = Field(index=True, max_length=100)
+    outcome: str = Field(default="success", index=True, max_length=30)
+    target_type: str = Field(default="", index=True, max_length=50)
+    target_id: str = Field(default="", max_length=100)
+    ip_address: str = Field(default="", max_length=64)
+    user_agent: str = Field(default="", max_length=500)
+    details_json: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class KnowledgeBase(SQLModel, table=True):
     """知识库表。
 

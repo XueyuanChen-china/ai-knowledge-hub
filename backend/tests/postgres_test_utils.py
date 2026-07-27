@@ -1,8 +1,13 @@
 import os
+from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import text
-from sqlmodel import SQLModel, create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine
 
 TEST_DATABASE_ADMIN_URL = os.getenv(
     "TEST_DATABASE_ADMIN_URL",
@@ -25,7 +30,7 @@ class PostgresTestDatabase:
             pool_pre_ping=True,
         )
         self.database_url = self._build_database_url(self.database_name)
-        self.engine = None
+        self.engine: Optional[Engine] = None
 
     def _build_database_url(self, database_name: str) -> str:
         prefix, _, _ = TEST_DATABASE_ADMIN_URL.rpartition("/")
@@ -39,7 +44,9 @@ class PostgresTestDatabase:
             self.database_url,
             pool_pre_ping=True,
         )
-        SQLModel.metadata.create_all(self.engine)
+        alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        alembic_config.set_main_option("sqlalchemy.url", self.database_url)
+        command.upgrade(alembic_config, "head")
         return self.engine
 
     def dispose(self) -> None:

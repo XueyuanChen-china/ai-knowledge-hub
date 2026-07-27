@@ -6,6 +6,71 @@ export interface KnowledgeBase {
   updated_at: string;
 }
 
+export interface AuthUser {
+  id: number;
+  email: string;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface AuthOrganization {
+  id: number;
+  name: string;
+  slug: string;
+}
+
+export interface AuthTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: AuthUser;
+  organization: AuthOrganization;
+  role: string;
+}
+
+export interface AuthMeResponse {
+  user: AuthUser;
+  organization: AuthOrganization;
+  role: string;
+}
+
+export type OrganizationRole = "owner" | "admin" | "editor" | "viewer";
+
+export interface OrganizationMember {
+  membership_id: number;
+  role: OrganizationRole;
+  joined_at: string;
+  user: AuthUser;
+}
+
+export interface MemberCreatePayload {
+  email: string;
+  initial_password: string;
+  role: OrganizationRole;
+}
+
+export interface SecurityAuditLog {
+  id: number;
+  organization_id: number | null;
+  actor_user_id: number | null;
+  actor_email: string;
+  action: string;
+  outcome: string;
+  target_type: string;
+  target_id: string;
+  ip_address: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SecurityAuditLogListResponse {
+  items: SecurityAuditLog[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface KnowledgeBasePayload {
   name: string;
   description: string;

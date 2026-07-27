@@ -219,6 +219,11 @@ def infer_pdf_line_separator(previous_text: str, current_text: str) -> str:
     if is_ascii_word_char(previous_char) and is_ascii_word_char(current_char):
         return " "
 
+    # 英文 PDF 可能把一个自然句子拆成两条视觉行。
+    # 上一行以句号等 ASCII 标点结束时，下一行的英文单词仍然需要空格。
+    if previous_char in ".!?;:,)]}" and is_ascii_word_char(current_char):
+        return " "
+
     return ""
 
 

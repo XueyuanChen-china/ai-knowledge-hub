@@ -190,6 +190,16 @@ backend/app/services/upload_postprocess_service.py
 
 如果 download 或校验失败，统一进入现有的重试退避逻辑，状态会变成 `retry_scheduled` 或 `failed`。
 
+当前还补充了 RabbitMQ 可靠性基础：
+
+- Celery/Kombu 打开 publisher confirm；
+- 主队列配置 `ai_knowledge_hub.dlx`；
+- 业务重试耗尽后使用 `reject(requeue=False)` 进入 `ai_knowledge_hub.dead`；
+- `task_acks_late` 保证任务执行完成后再确认；
+- Worker 丢失时保留重新投递机会。
+
+这里仍然只有一套业务重试：PostgreSQL `upload_processing_jobs` 的退避重试。DLX 只负责保存最终失败消息，不再次自动重试。
+
 ## 7. Phase C 本地验证
 
 启动 RabbitMQ：
