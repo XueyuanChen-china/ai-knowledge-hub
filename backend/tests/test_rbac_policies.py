@@ -10,6 +10,7 @@ from app.security.policies import (
     PERMISSION_KNOWLEDGE_BASE_WRITE,
     PERMISSION_SEARCH,
     PERMISSION_UPLOAD,
+    PERMISSION_USER_MANAGE,
     ROLE_ADMIN,
     ROLE_EDITOR,
     ROLE_OWNER,
@@ -38,6 +39,7 @@ class RbacPolicyTests(unittest.TestCase):
         for role in (ROLE_ADMIN, ROLE_OWNER):
             self.assertTrue(has_permission(role, PERMISSION_KNOWLEDGE_BASE_DELETE))
             self.assertTrue(has_permission(role, PERMISSION_CONTENT_DELETE))
+            self.assertTrue(has_permission(role, PERMISSION_USER_MANAGE))
 
     def test_unknown_role_has_no_permissions(self) -> None:
         self.assertFalse(has_permission("unknown", PERMISSION_CONTENT_READ))

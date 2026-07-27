@@ -51,6 +51,10 @@ class DatabaseMigrationTests(unittest.TestCase):
             "upload_parts",
             "upload_processing_jobs",
             "upload_audit_logs",
+            "organizations",
+            "users",
+            "organization_memberships",
+            "security_audit_logs",
         }
         self.assertTrue(expected_tables.issubset(set(inspect(self.engine).get_table_names())))
         self.assertEqual(

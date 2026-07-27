@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     auth_login_rate_limit_window_seconds: int = 60
     auth_login_failure_backoff_base_seconds: float = 0.5
 
+    # JWT 撤销黑名单使用的 Redis 地址。Redis 不保存 token 正文，只保存 jti 和剩余 TTL。
+    auth_redis_url: str = "redis://localhost:6379/0"
+    auth_token_blacklist_prefix: str = "ai-knowledge-hub:auth:blacklist:"
+    auth_redis_socket_timeout_seconds: float = 2.0
+
     # 默认组织由 identity migration 创建，管理员必须由显式 seed 脚本创建。
     auth_default_organization_slug: str = "default"
     auth_default_organization_name: str = "Default Organization"

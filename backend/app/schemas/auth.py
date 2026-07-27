@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,6 +13,7 @@ class AuthUserRead(BaseModel):
     id: int
     email: str
     is_active: bool
+    last_login_at: Optional[datetime]
     created_at: datetime
 
 

@@ -9,7 +9,7 @@ import jwt
 from app.config import Settings
 
 JWT_ALGORITHM = "HS256"
-REQUIRED_CLAIMS = ["sub", "exp", "iss", "aud", "jti"]
+REQUIRED_CLAIMS = ["sub", "exp", "iss", "aud", "jti", "ver"]
 
 
 def _require_secret(settings: Settings) -> str:
@@ -24,6 +24,7 @@ def create_access_token(
     user_id: int,
     organization_id: int,
     role: str,
+    token_version: int,
     settings: Settings,
 ) -> tuple[str, int]:
     """签发短期 access token。"""
@@ -35,6 +36,7 @@ def create_access_token(
         "sub": str(user_id),
         "org_id": organization_id,
         "role": role,
+        "ver": token_version,
         "iat": now,
         "exp": now + timedelta(seconds=expires_in),
         "iss": settings.auth_jwt_issuer,

@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Center, Loader } from "@mantine/core";
 
+import { AuthProvider } from "@/components/auth-context";
 import {
   clearAuthSession,
   getAuthToken,
   getCurrentUser,
 } from "@/lib/api/client";
+import type { AuthMeResponse } from "@/lib/api/types";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
+  const [principal, setPrincipal] = useState<AuthMeResponse | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -20,21 +22,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     async function validateSession() {
       if (!getAuthToken()) {
         if (active) {
-          setAuthenticated(false);
+          setPrincipal(null);
           setChecking(false);
         }
         return;
       }
 
       try {
-        await getCurrentUser();
+        const currentPrincipal = await getCurrentUser();
         if (active) {
-          setAuthenticated(true);
+          setPrincipal(currentPrincipal);
         }
       } catch {
         clearAuthSession();
         if (active) {
-          setAuthenticated(false);
+          setPrincipal(null);
         }
       } finally {
         if (active) {
@@ -46,7 +48,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     void validateSession();
 
     function handleExpired() {
-      setAuthenticated(false);
+      setPrincipal(null);
       navigate("/login", { replace: true, state: { from: location.pathname } });
     }
 
@@ -68,9 +70,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!authenticated) {
+  if (!principal) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  return children;
+  return <AuthProvider value={principal}>{children}</AuthProvider>;
 }

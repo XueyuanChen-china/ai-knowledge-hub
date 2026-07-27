@@ -28,6 +28,8 @@ class User(SQLModel, table=True):
     email: str = Field(index=True, unique=True, max_length=320)
     password_hash: str = Field(max_length=255)
     is_active: bool = Field(default=True, index=True)
+    # 修改密码或“退出所有设备”时递增；JWT 中版本不一致的 token 会立即失效。
+    token_version: int = Field(default=0)
     last_login_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -50,6 +52,35 @@ class OrganizationMembership(SQLModel, table=True):
     user_id: int = Field(foreign_key="users.id", index=True)
     role: str = Field(default="viewer", index=True, max_length=50)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SecurityAuditLog(SQLModel, table=True):
+    """身份与账号管理安全审计日志。
+
+    审计表只记录动作、对象和必要上下文，不保存密码、JWT、API Key 等敏感值。
+    """
+
+    __tablename__ = "security_audit_logs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    organization_id: Optional[int] = Field(
+        default=None,
+        foreign_key="organizations.id",
+        index=True,
+    )
+    actor_user_id: Optional[int] = Field(
+        default=None,
+        foreign_key="users.id",
+        index=True,
+    )
+    action: str = Field(index=True, max_length=100)
+    outcome: str = Field(default="success", index=True, max_length=30)
+    target_type: str = Field(default="", index=True, max_length=50)
+    target_id: str = Field(default="", max_length=100)
+    ip_address: str = Field(default="", max_length=64)
+    user_agent: str = Field(default="", max_length=500)
+    details_json: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class KnowledgeBase(SQLModel, table=True):

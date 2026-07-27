@@ -30,3 +30,4 @@ Day 文档记录从后端基础、数据库、文档解析、RAG、LangGraph 到
 - [切分代码讲解](text-splitter-code-walkthrough.md)
 - [PostgreSQL 数据库迁移](operations/database-migrations.md)
 - [U3：用户、组织与 RBAC](improvements/enterprise-readiness/u3-auth-rbac.md)
+- [U3.5：账号管理、会话安全与审计](improvements/enterprise-readiness/u3.5-account-management.md)

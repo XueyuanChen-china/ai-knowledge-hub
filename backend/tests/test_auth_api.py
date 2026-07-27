@@ -6,6 +6,7 @@ from pathlib import Path
 import jwt
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
+from unittest.mock import patch
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 TESTS_DIR = Path(__file__).resolve().parent
@@ -81,10 +82,11 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(payload["organization"]["slug"], "default")
         self.assertEqual(payload["role"], "owner")
 
-        me = self.client.get(
-            "/api/auth/me",
-            headers={"Authorization": f"Bearer {payload['access_token']}"},
-        )
+        with patch("app.security.dependencies.is_token_revoked", return_value=False):
+            me = self.client.get(
+                "/api/auth/me",
+                headers={"Authorization": f"Bearer {payload['access_token']}"},
+            )
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["user"]["id"], payload["user"]["id"])
 
@@ -107,19 +109,21 @@ class AuthApiTests(unittest.TestCase):
             "iss": "test-issuer",
             "aud": "test-audience",
             "jti": "expired-token",
+            "ver": 0,
         }
         expired = jwt.encode(
             base_claims,
             self.settings.auth_jwt_secret,
             algorithm=JWT_ALGORITHM,
         )
-        self.assertEqual(
-            self.client.get(
-                "/api/auth/me",
-                headers={"Authorization": f"Bearer {expired}"},
-            ).status_code,
-            401,
-        )
+        with patch("app.security.dependencies.is_token_revoked", return_value=False):
+            self.assertEqual(
+                self.client.get(
+                    "/api/auth/me",
+                    headers={"Authorization": f"Bearer {expired}"},
+                ).status_code,
+                401,
+            )
 
         base_claims["exp"] = datetime.now(timezone.utc) + timedelta(minutes=5)
         base_claims["iss"] = "wrong-issuer"
@@ -128,13 +132,42 @@ class AuthApiTests(unittest.TestCase):
             self.settings.auth_jwt_secret,
             algorithm=JWT_ALGORITHM,
         )
-        self.assertEqual(
-            self.client.get(
-                "/api/auth/me",
-                headers={"Authorization": f"Bearer {invalid_issuer}"},
-            ).status_code,
-            401,
+        with patch("app.security.dependencies.is_token_revoked", return_value=False):
+            self.assertEqual(
+                self.client.get(
+                    "/api/auth/me",
+                    headers={"Authorization": f"Bearer {invalid_issuer}"},
+                ).status_code,
+                401,
+            )
+
+    def test_logout_revokes_current_token(self) -> None:
+        login_response = self.client.post(
+            "/api/auth/login",
+            json={"email": "admin@example.com", "password": "correct-password"},
         )
+        token = login_response.json()["access_token"]
+        with patch("app.api.auth.revoke_token", return_value=600) as revoke:
+            response = self.client.post(
+                "/api/auth/logout",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.assertEqual(response.status_code, 204)
+        revoke.assert_called_once()
+        self.assertEqual(revoke.call_args.kwargs["settings"], self.settings)
+
+    def test_revoked_token_is_rejected(self) -> None:
+        login_response = self.client.post(
+            "/api/auth/login",
+            json={"email": "admin@example.com", "password": "correct-password"},
+        )
+        token = login_response.json()["access_token"]
+        with patch("app.security.dependencies.is_token_revoked", return_value=True):
+            response = self.client.get(
+                "/api/auth/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.assertEqual(response.status_code, 401)
 
     def test_wrong_credentials_are_generic_and_rate_limited(self) -> None:
         first = self.client.post(

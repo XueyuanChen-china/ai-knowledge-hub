@@ -18,6 +18,10 @@ import type {
   KnowledgeItemChunkResponse,
   KnowledgeItemIndexResponse,
   KnowledgeItemPayload,
+  MemberCreatePayload,
+  OrganizationMember,
+  OrganizationRole,
+  SecurityAuditLogListResponse,
   SemanticSearchResult,
 } from "@/lib/api/types";
 
@@ -264,6 +268,93 @@ export async function login(
 
 export async function getCurrentUser(): Promise<AuthMeResponse> {
   return request<AuthMeResponse>("/api/auth/me");
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await request<void>("/api/auth/logout", { method: "POST" });
+  } finally {
+    // 即使 Redis 暂时不可用，也清理本地 token，避免当前页面继续带着旧凭证请求。
+    clearAuthSession();
+  }
+}
+
+export async function getOrganizationMembers(): Promise<OrganizationMember[]> {
+  return request<OrganizationMember[]>("/api/admin/users");
+}
+
+export async function createOrganizationMember(
+  payload: MemberCreatePayload,
+): Promise<OrganizationMember> {
+  return request<OrganizationMember>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrganizationMemberRole(
+  userId: number,
+  role: OrganizationRole,
+): Promise<OrganizationMember> {
+  return request<OrganizationMember>(`/api/admin/users/${userId}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function updateOrganizationMemberStatus(
+  userId: number,
+  isActive: boolean,
+): Promise<OrganizationMember> {
+  return request<OrganizationMember>(`/api/admin/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+export async function resetOrganizationMemberPassword(
+  userId: number,
+  newPassword: string,
+): Promise<void> {
+  return request<void>(`/api/admin/users/${userId}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+}
+
+export async function removeOrganizationMember(userId: number): Promise<void> {
+  return request<void>(`/api/admin/users/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getSecurityAuditLogs(
+  offset = 0,
+  limit = 50,
+): Promise<SecurityAuditLogListResponse> {
+  return request<SecurityAuditLogListResponse>(
+    `/api/admin/audit-logs?offset=${offset}&limit=${limit}`,
+  );
+}
+
+export async function changeCurrentPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request<void>("/api/account/change-password", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  // 修改密码会让服务端递增 token_version，当前 token 已不再有效。
+  clearAuthSession();
+}
+
+export async function logoutAllDevices(): Promise<void> {
+  await request<void>("/api/account/logout-all", { method: "POST" });
+  clearAuthSession();
 }
 
 export async function getKnowledgeBases(): Promise<KnowledgeBase[]> {

@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 from app.db.database import get_session
 from app.db.models import OrganizationMembership, User
 from app.security.policies import has_permission
+from app.security.revocation import TokenRevocationUnavailable, is_token_revoked
 from app.security.tokens import decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -51,8 +52,19 @@ def get_current_principal(
         user_id = int(payload["sub"])
         organization_id = int(payload["org_id"])
         token_id = str(payload["jti"])
+        token_version = int(payload["ver"])
     except (ValueError, KeyError, TypeError, jwt.PyJWTError, RuntimeError) as exc:
         raise authentication_error() from exc
+
+    try:
+        if is_token_revoked(token_id, settings):
+            raise authentication_error()
+    except TokenRevocationUnavailable as exc:
+        # 黑名单存储不可用时拒绝鉴权，避免撤销机制失效后继续放行 token。
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is temporarily unavailable",
+        ) from exc
 
     user = session.get(User, user_id)
     membership = session.exec(
@@ -61,7 +73,12 @@ def get_current_principal(
             OrganizationMembership.organization_id == organization_id,
         )
     ).first()
-    if user is None or not user.is_active or membership is None:
+    if (
+        user is None
+        or not user.is_active
+        or membership is None
+        or user.token_version != token_version
+    ):
         raise authentication_error()
 
     return Principal(

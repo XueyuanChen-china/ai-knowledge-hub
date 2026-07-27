@@ -20,3 +20,4 @@
 - [U1：测试基线与回归测试](./enterprise-readiness/u1-testing-baseline.md)
 - [U2：Alembic 数据库迁移](./enterprise-readiness/u2-alembic-migrations.md)
 - [U3：用户、组织与 RBAC](./enterprise-readiness/u3-auth-rbac.md)
+- [U3.5：账号管理、会话安全与审计](./enterprise-readiness/u3.5-account-management.md)

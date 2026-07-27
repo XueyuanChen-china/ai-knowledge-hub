@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.chat import router as chat_router
 from app.api.auth import router as auth_router
+from app.api.account import router as account_router
+from app.api.admin_users import router as admin_users_router
 from app.api.document import router as document_router
 from app.api.knowledge_base import router as knowledge_base_router
 from app.api.knowledge_item import router as knowledge_item_router
@@ -35,6 +37,8 @@ app.include_router(knowledge_base_router)
 
 # 注册登录和当前用户接口。管理员必须由显式 seed 脚本创建。
 app.include_router(auth_router)
+app.include_router(account_router)
+app.include_router(admin_users_router)
 
 # 注册知识条目 CRUD 路由。
 # 注册后，Swagger 里会出现 /knowledge-items 相关接口。
