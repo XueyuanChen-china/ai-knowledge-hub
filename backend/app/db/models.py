@@ -101,6 +101,10 @@ class KnowledgeBase(SQLModel, table=True):
     # Optional[int] + default=None 表示创建对象时可以不传 id，由数据库自动生成。
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    # U4 起所有业务资源都必须归属一个组织，不能只依赖前端传入的 id。
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
+
     # 知识库名称。
     # index=True 表示给这个字段建索引，后续按名称搜索会更快。
     name: str = Field(index=True, max_length=100)
@@ -127,6 +131,9 @@ class Document(SQLModel, table=True):
     __tablename__ = "documents"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
 
     # 所属知识库。
     # foreign_key 会在数据库层面表达 documents.knowledge_base_id 指向 knowledge_bases.id。
@@ -161,6 +168,9 @@ class KnowledgeItem(SQLModel, table=True):
     __tablename__ = "knowledge_items"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
 
     # 所属知识库。
     knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
@@ -236,6 +246,9 @@ class Chunk(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    # 冗余保存组织归属，供 Elasticsearch 写入与过滤使用。
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+
     knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
 
     # 如果 chunk 来自上传文档，这里冗余记录原始 document id，方便按文件追溯。
@@ -276,6 +289,9 @@ class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
 
     knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
 
@@ -356,6 +372,9 @@ class UploadTask(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
+
     # 对外暴露的稳定上传任务 ID。
     upload_id: str = Field(index=True, unique=True, max_length=64)
 
@@ -425,7 +444,7 @@ class UploadTask(SQLModel, table=True):
     # 错误信息。失败时用于排查。
     error_message: str = ""
 
-    # 预留上传人标识，当前先不强依赖用户系统。
+    # 历史展示字段；授权一律以 created_by_user_id 为准。
     created_by: str = Field(default="", max_length=100)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)

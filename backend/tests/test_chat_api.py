@@ -17,9 +17,11 @@ from app.db.database import get_session
 from app.db.models import Conversation, KnowledgeBase, Message, ReviewTask
 from app.graph import nodes
 from app.main import app
+from app.security.dependencies import get_current_principal
 from app.services import rag_service
 from app.services.rag_service import RetrievedDocument
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class ChatApiTests(unittest.TestCase):
@@ -35,7 +37,14 @@ class ChatApiTests(unittest.TestCase):
         self.client = TestClient(app)
 
         with Session(self.engine) as session:
-            knowledge_base = KnowledgeBase(name="制度库", description="chat api test")
+            self.principal = create_test_identity(session)
+            app.dependency_overrides[get_current_principal] = lambda: self.principal
+            knowledge_base = KnowledgeBase(
+                name="制度库",
+                description="chat api test",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
+            )
             session.add(knowledge_base)
             session.commit()
             session.refresh(knowledge_base)
@@ -335,11 +344,15 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="第一次问题",
                 thread_id="thread-1",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             second = Conversation(
                 knowledge_base_id=self.knowledge_base_id,
                 title="第二次问题",
                 thread_id="thread-2",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(first)
             session.add(second)
@@ -386,6 +399,8 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="采购问题",
                 thread_id="thread-history",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(conversation)
             session.commit()
@@ -441,6 +456,8 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="旧标题",
                 thread_id="thread-update",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(conversation)
             session.commit()
@@ -470,6 +487,8 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="待删除会话",
                 thread_id="thread-delete",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(conversation)
             session.commit()

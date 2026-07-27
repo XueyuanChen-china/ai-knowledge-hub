@@ -18,6 +18,7 @@ from app.services import rag_service
 from app.services.llm_router_service import RouterDecision
 from app.services.rag_service import RetrievedDocument
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class GraphWorkflowTests(unittest.TestCase):
@@ -25,8 +26,14 @@ class GraphWorkflowTests(unittest.TestCase):
         self.test_database = PostgresTestDatabase()
         self.engine = self.test_database.create_engine()
         self.session = Session(self.engine)
+        self.principal = create_test_identity(self.session)
 
-        knowledge_base = KnowledgeBase(name="制度库", description="用于图工作流测试")
+        knowledge_base = KnowledgeBase(
+            name="制度库",
+            description="用于图工作流测试",
+            organization_id=self.principal.organization_id,
+            created_by_user_id=self.principal.user_id,
+        )
         self.session.add(knowledge_base)
         self.session.commit()
         self.session.refresh(knowledge_base)

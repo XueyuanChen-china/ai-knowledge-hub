@@ -1,12 +1,10 @@
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from sqlmodel import Session
 
 from app.graph import nodes
+from app.graph.checkpointer import get_graph_checkpointer
 from app.graph.state import GraphState
-
-CHECKPOINTER = InMemorySaver()
 
 
 def build_checkpointed_workflow(
@@ -14,7 +12,7 @@ def build_checkpointed_workflow(
     *,
     retrieve_top_k: int = 5,
 ):
-    """构造带 InMemorySaver 的 LangGraph 工作流。"""
+    """构造带 PostgreSQL checkpointer 的 LangGraph 工作流。"""
 
     builder = StateGraph(GraphState)
 
@@ -78,7 +76,7 @@ def build_checkpointed_workflow(
     builder.add_edge("review_rejected", END)
     builder.add_edge("complex", END)
 
-    return builder.compile(checkpointer=CHECKPOINTER)
+    return builder.compile(checkpointer=get_graph_checkpointer())
 
 
 def route_after_router(state: GraphState) -> str:

@@ -21,3 +21,5 @@
 - [U2：Alembic 数据库迁移](./enterprise-readiness/u2-alembic-migrations.md)
 - [U3：用户、组织与 RBAC](./enterprise-readiness/u3-auth-rbac.md)
 - [U3.5：账号管理、会话安全与审计](./enterprise-readiness/u3.5-account-management.md)
+- [U4：跨存储授权边界](./enterprise-readiness/u4-resource-authorization.md)
+- [U5：持久化 LangGraph Checkpoint](./enterprise-readiness/u5-persistent-langgraph-checkpoints.md)

@@ -159,12 +159,15 @@ def retrieve_node(
     knowledge_base_id = state.get("knowledge_base_id")
     if knowledge_base_id is None:
         raise ValueError("knowledge_base_id is required for rag route")
-
+    organization_id = state.get("organization_id")
+    retrieve_kwargs = {"top_k": top_k}
+    if organization_id is not None:
+        retrieve_kwargs["organization_id"] = int(organization_id)
     retrieved_docs = rag_service.retrieve(
         question,
         int(knowledge_base_id),
         session,
-        top_k=top_k,
+        **retrieve_kwargs,
     )
     context = rag_service.format_context(retrieved_docs)
 

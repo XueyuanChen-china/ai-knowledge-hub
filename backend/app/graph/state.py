@@ -14,6 +14,7 @@ class GraphState(TypedDict, total=False):
     """
 
     question: str
+    organization_id: int
     knowledge_base_id: int
     conversation_id: int
     thread_id: str

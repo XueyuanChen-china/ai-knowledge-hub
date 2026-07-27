@@ -107,6 +107,7 @@ def validate_upload_init_request(payload: UploadInitRequest, settings: Settings)
 
 def build_object_key(
     storage_prefix: str,
+    organization_id: int,
     knowledge_base_id: int,
     upload_id: str,
     extension: str,
@@ -116,7 +117,7 @@ def build_object_key(
     normalized_prefix = storage_prefix.strip().strip("/")
     clean_extension = extension.lstrip(".").lower()
     return (
-        f"{normalized_prefix}/{knowledge_base_id}/{upload_id}/"
+        f"{normalized_prefix}/{organization_id}/{knowledge_base_id}/{upload_id}/"
         f"source.{clean_extension}"
     )
 
@@ -186,6 +187,15 @@ def validate_part_number(part_number: int, total_parts: int) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="part_number must be greater than 0",
         )
+
+
+def expected_part_size(upload_task: UploadTask, part_number: int) -> int:
+    """返回某一分片的精确字节数，最后一片允许小于标准 part_size。"""
+
+    validate_part_number(part_number, upload_task.total_parts)
+    if part_number < upload_task.total_parts:
+        return upload_task.part_size
+    return upload_task.file_size - upload_task.part_size * (upload_task.total_parts - 1)
 
     if part_number > total_parts:
         raise HTTPException(
@@ -392,21 +402,38 @@ def upsert_upload_part(
 def init_upload_task(
     payload: UploadInitRequest,
     *,
+    organization_id: int,
+    created_by_user_id: int,
     session: Session,
     settings: Settings,
     storage: ObjectStorageAdapter,
 ) -> UploadTask:
     """初始化上传任务并在对象存储侧创建 multipart upload。"""
 
-    ensure_knowledge_base_exists(payload.knowledge_base_id, session)
+    knowledge_base = session.exec(
+        select(KnowledgeBase).where(
+            KnowledgeBase.id == payload.knowledge_base_id,
+            KnowledgeBase.organization_id == organization_id,
+        )
+    ).first()
+    if knowledge_base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
     extension = validate_upload_init_request(payload, settings)
-    enforce_upload_actor_limits(payload, session, settings)
+    enforce_upload_actor_limits(
+        payload.model_copy(update={"created_by": str(created_by_user_id)}),
+        session,
+        settings,
+    )
 
     upload_id = build_upload_id()
     part_size = settings.upload_default_part_size
     total_parts = calculate_total_parts(payload.file_size, part_size)
     object_key = build_object_key(
         settings.oss_storage_prefix,
+        organization_id,
         payload.knowledge_base_id,
         upload_id,
         extension,
@@ -434,6 +461,8 @@ def init_upload_task(
         storage_upload_id = init_result.upload_id
 
         upload_task = UploadTask(
+            organization_id=organization_id,
+            created_by_user_id=created_by_user_id,
             upload_id=upload_id,
             knowledge_base_id=payload.knowledge_base_id,
             original_filename=payload.filename.strip(),
@@ -448,7 +477,7 @@ def init_upload_task(
             file_sha256=payload.file_sha256.strip(),
             storage_upload_id=storage_upload_id,
             status=UPLOAD_STATUS_INITIATED,
-            created_by=payload.created_by.strip(),
+            created_by=str(created_by_user_id),
             expires_at=datetime.utcnow() + timedelta(hours=settings.upload_task_expire_hours),
             auto_create_document=auto_create_document,
             auto_index_on_complete=auto_index_on_complete,
@@ -644,6 +673,12 @@ def complete_upload_part(
 
     remote_etag = normalize_etag(remote_part.get("etag"))
     remote_part_size = int(remote_part.get("size") or 0)
+    expected_size = expected_part_size(upload_task, payload.part_number)
+    if remote_part_size != expected_size:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="part_size does not match the expected upload task boundary",
+        )
     if normalize_etag(payload.etag) and normalize_etag(payload.etag) != remote_etag:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -932,6 +967,7 @@ def cleanup_expired_upload_tasks(
     session: Session,
     settings: Settings,
     storage: ObjectStorageAdapter,
+    organization_id: Optional[int] = None,
 ) -> Tuple[int, int]:
     """清理已过期且未结束的上传任务。"""
 
@@ -945,6 +981,8 @@ def cleanup_expired_upload_tasks(
             ]
         ),
     )
+    if organization_id is not None:
+        statement = statement.where(UploadTask.organization_id == organization_id)
     tasks = list(session.exec(statement).all())
     expired_count = 0
     aborted_remote_count = 0

@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     # 当前项目统一使用 PostgreSQL，不再保留 SQLite 运行时支持。
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ai_knowledge_hub"
 
+    # LangGraph checkpoint 使用独立连接池。为空时复用 database_url，但不复用
+    # SQLModel 业务 Session，避免一次图执行长期占用请求事务。
+    graph_checkpoint_database_url: str = ""
+    graph_checkpoint_pool_min_size: int = 1
+    graph_checkpoint_pool_max_size: int = 4
+    graph_checkpoint_pool_timeout_seconds: float = 10.0
+
     # JWT 签名密钥只从环境变量读取；生产环境必须显式配置，不能使用代码默认值。
     auth_jwt_secret: str = Field(
         default="",
@@ -66,8 +73,12 @@ class Settings(BaseSettings):
     # 是否校验证书。HTTP 本地开发先默认关闭。
     elasticsearch_verify_certs: bool = False
 
-    # 向量索引名前缀。后面会拼上 knowledge_base_id。
+    # 向量索引名前缀。后面会拼上版本号和 knowledge_base_id。
     elasticsearch_index_prefix: str = "knowledge_chunks_"
+
+    # 资源授权字段进入 ES 后使用新的具体索引。检索统一走 alias，
+    # 这样重建存量向量时可以先写新索引，再原子切换，不会覆盖旧索引。
+    elasticsearch_index_version: int = 2
 
     # content 字段使用的 analyzer。第一版显式使用 ES 内置 cjk analyzer，
     # 这样中文关键词检索时比默认 standard 更合适。

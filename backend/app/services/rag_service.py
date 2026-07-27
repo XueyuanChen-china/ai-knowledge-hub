@@ -36,6 +36,7 @@ def retrieve(
     knowledge_base_id: int,
     session: Session,
     *,
+    organization_id: Optional[int] = None,
     top_k: int = 5,
 ) -> list[RetrievedDocument]:
     """根据问题从知识库里检索相关 chunk。"""
@@ -44,16 +45,25 @@ def retrieve(
     if not normalized_question:
         raise ValueError("question must not be empty")
 
-    knowledge_base = session.get(KnowledgeBase, knowledge_base_id)
+    statement = select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+    if organization_id is not None:
+        statement = statement.where(KnowledgeBase.organization_id == organization_id)
+    knowledge_base = session.exec(statement).first()
     if knowledge_base is None:
         raise ValueError("knowledge base not found")
+    resolved_organization_id = knowledge_base.organization_id
 
     hits = search_similar_chunks(
+        organization_id=resolved_organization_id,
         knowledge_base_id=knowledge_base_id,
         query=normalized_question,
         top_k=top_k,
     )
-    title_map = build_knowledge_item_title_map(hits, session)
+    title_map = build_knowledge_item_title_map(
+        hits,
+        organization_id=resolved_organization_id,
+        session=session,
+    )
 
     documents: list[RetrievedDocument] = []
     for hit in hits:
@@ -137,6 +147,8 @@ def generate_answer(
 
 def build_knowledge_item_title_map(
     hits: list[SemanticSearchHit],
+    *,
+    organization_id: int,
     session: Session,
 ) -> dict[int, str]:
     """批量查询知识条目标题。"""
@@ -147,7 +159,10 @@ def build_knowledge_item_title_map(
     if not knowledge_item_ids:
         return {}
 
-    statement = select(KnowledgeItem).where(KnowledgeItem.id.in_(knowledge_item_ids))
+    statement = select(KnowledgeItem).where(
+        KnowledgeItem.id.in_(knowledge_item_ids),
+        KnowledgeItem.organization_id == organization_id,
+    )
     knowledge_items = session.exec(statement).all()
     return {item.id: item.title for item in knowledge_items if item.id is not None}
 

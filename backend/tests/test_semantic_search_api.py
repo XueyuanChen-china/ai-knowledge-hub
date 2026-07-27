@@ -17,6 +17,7 @@ from app.db.models import KnowledgeBase, KnowledgeItem
 from app.schemas.search import SemanticSearchRequest
 from app.services.vector_service import SemanticSearchHit
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class SemanticSearchApiTests(unittest.TestCase):
@@ -24,8 +25,13 @@ class SemanticSearchApiTests(unittest.TestCase):
         self.test_database = PostgresTestDatabase()
         self.engine = self.test_database.create_engine()
         self.session = Session(self.engine)
+        self.principal = create_test_identity(self.session)
+        ownership = {
+            "organization_id": self.principal.organization_id,
+            "created_by_user_id": self.principal.user_id,
+        }
 
-        knowledge_base = KnowledgeBase(name="制度库", description="用于语义搜索测试")
+        knowledge_base = KnowledgeBase(name="制度库", description="用于语义搜索测试", **ownership)
         self.session.add(knowledge_base)
         self.session.commit()
         self.session.refresh(knowledge_base)
@@ -38,6 +44,7 @@ class SemanticSearchApiTests(unittest.TestCase):
             tags="[]",
             status="active",
             source_type="manual",
+            **ownership,
         )
         self.session.add(knowledge_item)
         self.session.commit()
@@ -51,7 +58,7 @@ class SemanticSearchApiTests(unittest.TestCase):
     def test_semantic_search_returns_enriched_hits(self) -> None:
         original_search = search_api.search_similar_chunks
         try:
-            search_api.search_similar_chunks = lambda knowledge_base_id, query, top_k=5: [
+            search_api.search_similar_chunks = lambda organization_id, knowledge_base_id, query, top_k=5: [
                 SemanticSearchHit(
                     vector_id="vector_1",
                     chunk_id=21,
@@ -69,6 +76,7 @@ class SemanticSearchApiTests(unittest.TestCase):
                     query="怎么报销差旅费",
                     top_k=3,
                 ),
+                principal=self.principal,
                 session=self.session,
             )
         finally:
@@ -89,6 +97,7 @@ class SemanticSearchApiTests(unittest.TestCase):
                     query="   ",
                     top_k=3,
                 ),
+                principal=self.principal,
                 session=self.session,
             )
 

@@ -336,6 +336,8 @@ def get_or_create_document_for_upload_task(
             return document
 
     document = Document(
+        organization_id=upload_task.organization_id,
+        created_by_user_id=upload_task.created_by_user_id,
         knowledge_base_id=upload_task.knowledge_base_id,
         filename=upload_task.original_filename,
         file_path=str(local_file_path),

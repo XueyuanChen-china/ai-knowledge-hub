@@ -9,7 +9,7 @@ from pypdf import PdfReader
 from sqlmodel import Session, select
 
 from app.db.database import get_session
-from app.db.models import Chunk, Document, KnowledgeBase, KnowledgeItem
+from app.db.models import Chunk, Document, KnowledgeItem
 from app.schemas.chunk import ChunkRead
 from app.schemas.document import DocumentChunkResponse, DocumentIndexResponse, DocumentRead
 from app.services.text_splitter import (
@@ -22,8 +22,21 @@ from app.services.document_splitter.parsers.docx_parser import document_to_text
 from app.services.document_splitter.parsers.excel_parser import workbook_to_text
 from app.services.document_splitter.parsers.pdf_layout_parser import pdf_layout_document_to_text
 from app.services.vector_service import add_chunks, delete_vectors
+from app.security.dependencies import Principal, require_permission
+from app.security.policies import (
+    PERMISSION_CONTENT_READ,
+    PERMISSION_CONTENT_WRITE,
+    PERMISSION_UPLOAD,
+)
+from app.security.resource_access import (
+    get_document_or_404,
+    get_knowledge_base_or_404,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+read_dependency = require_permission(PERMISSION_CONTENT_READ)
+write_dependency = require_permission(PERMISSION_CONTENT_WRITE)
+upload_dependency = require_permission(PERMISSION_UPLOAD)
 
 UPLOAD_DIR = Path("data/uploads")
 ALLOWED_FILE_EXTENSIONS = {".txt", ".md", ".pdf", ".xlsx", ".docx"}
@@ -31,16 +44,12 @@ ALLOWED_FILE_EXTENSIONS = {".txt", ".md", ".pdf", ".xlsx", ".docx"}
 
 def ensure_knowledge_base_exists(
     knowledge_base_id: int,
+    principal: Principal,
     session: Session,
 ) -> None:
     """确认上传文件要归属的知识库存在。"""
 
-    knowledge_base = session.get(KnowledgeBase, knowledge_base_id)
-    if knowledge_base is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
+    get_knowledge_base_or_404(knowledge_base_id, principal, session)
 
 
 def validate_upload_file(file: UploadFile) -> str:
@@ -113,6 +122,7 @@ def extract_pdf_pages(file_path: Path) -> list[PdfPageText]:
 def upload_document(
     knowledge_base_id: int = Form(...),
     file: UploadFile = File(...),
+    principal: Principal = Depends(upload_dependency),
     session: Session = Depends(get_session),
 ) -> Document:
     """上传 txt / md / pdf / xlsx / docx 文件。
@@ -125,7 +135,7 @@ def upload_document(
     - 返回 document_id，也就是响应里的 id
     """
 
-    ensure_knowledge_base_exists(knowledge_base_id, session)
+    ensure_knowledge_base_exists(knowledge_base_id, principal, session)
     suffix = validate_upload_file(file)
 
     original_filename = Path(file.filename or "upload").name
@@ -152,6 +162,8 @@ def upload_document(
         ) from exc
 
     document = Document(
+        organization_id=principal.organization_id,
+        created_by_user_id=principal.user_id,
         knowledge_base_id=knowledge_base_id,
         filename=original_filename,
         file_path=str(upload_path),
@@ -170,6 +182,7 @@ def upload_document(
 @router.get("", response_model=list[DocumentRead])
 def list_documents(
     knowledge_base_id: Optional[int] = Query(default=None),
+    principal: Principal = Depends(read_dependency),
     session: Session = Depends(get_session),
 ) -> list[Document]:
     """查询文档列表。
@@ -178,8 +191,9 @@ def list_documents(
     当前前端文档页会用这个接口展示上传结果，并支持按 knowledge_base_id 过滤。
     """
 
-    statement = select(Document)
+    statement = select(Document).where(Document.organization_id == principal.organization_id)
     if knowledge_base_id is not None:
+        ensure_knowledge_base_exists(knowledge_base_id, principal, session)
         statement = statement.where(Document.knowledge_base_id == knowledge_base_id)
 
     statement = statement.order_by(Document.created_at.desc(), Document.id.desc())
@@ -193,6 +207,7 @@ def list_documents(
 )
 def split_document_into_chunks(
     document_id: int,
+    principal: Principal = Depends(write_dependency),
     session: Session = Depends(get_session),
 ) -> DocumentChunkResponse:
     """把文档提取文本切成 chunks，并写入 chunks 表。
@@ -201,12 +216,7 @@ def split_document_into_chunks(
     Day 8 先采用手动触发，方便先确认 extracted_text 是否正确。
     """
 
-    document = session.get(Document, document_id)
-    if document is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    document = get_document_or_404(document_id, principal, session)
 
     if not document.extracted_text.strip():
         raise HTTPException(
@@ -239,6 +249,7 @@ def split_document_into_chunks(
 )
 def index_document(
     document_id: int,
+    principal: Principal = Depends(write_dependency),
     session: Session = Depends(get_session),
 ) -> DocumentIndexResponse:
     """切 chunk 并写入 PostgreSQL + Elasticsearch。
@@ -247,12 +258,7 @@ def index_document(
     Day 9 先按文档维度做手动触发，方便在 Swagger 里验收。
     """
 
-    document = session.get(Document, document_id)
-    if document is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    document = get_document_or_404(document_id, principal, session)
 
     if not document.extracted_text.strip():
         raise HTTPException(
@@ -305,6 +311,7 @@ def index_document(
 @router.get("/{document_id}/chunks", response_model=list[ChunkRead])
 def list_document_chunks(
     document_id: int,
+    principal: Principal = Depends(read_dependency),
     session: Session = Depends(get_session),
 ) -> list[Chunk]:
     """查询某个文档生成的所有 chunks。
@@ -313,12 +320,7 @@ def list_document_chunks(
     这个接口用于在 Swagger 里直接验收切分结果，不必打开 DB Browser。
     """
 
-    document = session.get(Document, document_id)
-    if document is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
+    document = get_document_or_404(document_id, principal, session)
 
     statement = (
         select(Chunk)
@@ -349,6 +351,8 @@ def get_or_create_document_knowledge_item(
         return knowledge_item
 
     knowledge_item = KnowledgeItem(
+        organization_id=document.organization_id,
+        created_by_user_id=document.created_by_user_id,
         knowledge_base_id=document.knowledge_base_id,
         title=document.filename,
         content=document.extracted_text,
@@ -429,6 +433,7 @@ def regenerate_document_chunks(
         }
 
         chunk = Chunk(
+            organization_id=document.organization_id,
             knowledge_base_id=document.knowledge_base_id,
             document_id=document.id,
             knowledge_item_id=knowledge_item.id,

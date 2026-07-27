@@ -14,8 +14,10 @@ if str(TESTS_DIR) not in sys.path:
 
 from app.api import document as document_api
 from app.db.models import Chunk, Document, KnowledgeBase
+from app.security.resource_access import get_document_or_404
 from app.services.document_splitter.models import ChunkData
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class FakeIndexResult:
@@ -30,8 +32,17 @@ class DocumentIndexingTests(unittest.TestCase):
         self.test_database = PostgresTestDatabase()
         self.engine = self.test_database.create_engine()
         self.session = Session(self.engine)
+        self.principal = create_test_identity(self.session)
+        ownership = {
+            "organization_id": self.principal.organization_id,
+            "created_by_user_id": self.principal.user_id,
+        }
 
-        knowledge_base = KnowledgeBase(name="测试知识库", description="用于 Day 9 测试")
+        knowledge_base = KnowledgeBase(
+            name="测试知识库",
+            description="用于 Day 9 测试",
+            **ownership,
+        )
         self.session.add(knowledge_base)
         self.session.commit()
         self.session.refresh(knowledge_base)
@@ -47,6 +58,7 @@ class DocumentIndexingTests(unittest.TestCase):
             file_type="txt",
             status="uploaded",
             extracted_text="第一段\n\n第二段",
+            **ownership,
         )
         self.session.add(document)
         self.session.commit()
@@ -73,7 +85,11 @@ class DocumentIndexingTests(unittest.TestCase):
             )
             document_api.delete_vectors = lambda knowledge_base_id, vector_ids: None
 
-            response = document_api.index_document(self.document.id, session=self.session)
+            response = document_api.index_document(
+                self.document.id,
+                principal=self.principal,
+                session=self.session,
+            )
         finally:
             document_api.split_document_text = original_splitter
             document_api.add_chunks = original_add_chunks
@@ -111,7 +127,11 @@ class DocumentIndexingTests(unittest.TestCase):
             document_api.delete_vectors = lambda knowledge_base_id, vector_ids: None
 
             with self.assertRaises(RuntimeError):
-                document_api.index_document(self.document.id, session=self.session)
+                document_api.index_document(
+                    self.document.id,
+                    principal=self.principal,
+                    session=self.session,
+                )
         finally:
             document_api.split_document_text = original_splitter
             document_api.add_chunks = original_add_chunks
@@ -121,7 +141,12 @@ class DocumentIndexingTests(unittest.TestCase):
         self.assertEqual(refreshed_document.status, "failed")
 
     def test_list_documents_supports_knowledge_base_filter(self) -> None:
-        other_base = KnowledgeBase(name="另一个知识库", description="filter test")
+        other_base = KnowledgeBase(
+            name="另一个知识库",
+            description="filter test",
+            organization_id=self.principal.organization_id,
+            created_by_user_id=self.principal.user_id,
+        )
         self.session.add(other_base)
         self.session.commit()
         self.session.refresh(other_base)
@@ -133,12 +158,15 @@ class DocumentIndexingTests(unittest.TestCase):
             file_type="txt",
             status="uploaded",
             extracted_text="另一个文档",
+            organization_id=self.principal.organization_id,
+            created_by_user_id=self.principal.user_id,
         )
         self.session.add(other_document)
         self.session.commit()
 
         filtered_documents = document_api.list_documents(
             knowledge_base_id=self.knowledge_base.id,
+            principal=self.principal,
             session=self.session,
         )
 

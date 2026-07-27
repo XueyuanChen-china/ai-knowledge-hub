@@ -17,10 +17,16 @@ class FakeEmbeddingModel:
         return [[float(len(text))] * 1024 for text in texts]
 
 
+class FakeNotFoundError(Exception):
+    def __init__(self):
+        self.meta = SimpleNamespace(status=404)
+
+
 class FakeIndicesClient:
     def __init__(self):
         self.created = []
         self.exists_result = False
+        self.aliases = {}
 
     def exists(self, index):
         return self.exists_result
@@ -33,6 +39,25 @@ class FakeIndicesClient:
                 "settings": settings,
             }
         )
+
+    def get_alias(self, name):
+        matching = {
+            index: {"aliases": {name: {}}}
+            for index, aliases in self.aliases.items()
+            if name in aliases
+        }
+        if not matching:
+            raise FakeNotFoundError()
+        return matching
+
+    def update_aliases(self, actions):
+        for action in actions:
+            operation, payload = next(iter(action.items()))
+            aliases = self.aliases.setdefault(payload["index"], set())
+            if operation == "add":
+                aliases.add(payload["alias"])
+            elif operation == "remove":
+                aliases.discard(payload["alias"])
 
 
 class FakeElasticsearchClient:
@@ -59,6 +84,7 @@ class VectorServiceTests(unittest.TestCase):
     def build_settings(self, **overrides):
         return SimpleNamespace(
             elasticsearch_index_prefix=overrides.get("elasticsearch_index_prefix", "knowledge_chunks_"),
+            elasticsearch_index_version=overrides.get("elasticsearch_index_version", 2),
             elasticsearch_content_analyzer=overrides.get("elasticsearch_content_analyzer", "cjk"),
             elasticsearch_content_search_analyzer=overrides.get(
                 "elasticsearch_content_search_analyzer",
@@ -73,6 +99,7 @@ class VectorServiceTests(unittest.TestCase):
     def build_chunk(self, **overrides):
         return Chunk(
             id=overrides.get("id", 10),
+            organization_id=overrides.get("organization_id", 7),
             knowledge_base_id=overrides.get("knowledge_base_id", 1),
             document_id=overrides.get("document_id", 2),
             knowledge_item_id=overrides.get("knowledge_item_id", 3),
@@ -154,13 +181,13 @@ class VectorServiceTests(unittest.TestCase):
             vector_service.get_settings = original_get_settings
             vector_service.execute_bulk_actions = original_execute_bulk_actions
 
-        self.assertEqual(result.index_name, "knowledge_chunks_1")
+        self.assertEqual(result.index_name, "knowledge_chunks_v2_1")
         self.assertEqual(len(result.vector_ids), 2)
         self.assertEqual(len(fake_client.indices.created), 1)
         self.assertEqual(len(bulk_calls), 1)
         self.assertEqual(bulk_calls[0]["refresh"], "wait_for")
         self.assertEqual(len(bulk_calls[0]["actions"]), 2)
-        self.assertEqual(bulk_calls[0]["actions"][0]["_index"], "knowledge_chunks_1")
+        self.assertEqual(bulk_calls[0]["actions"][0]["_index"], "knowledge_chunks_v2_1")
         self.assertEqual(bulk_calls[0]["actions"][0]["content"], "第一段")
         self.assertEqual(len(bulk_calls[0]["actions"][0]["embedding"]), 1024)
         self.assertEqual(bulk_calls[0]["actions"][0]["embedding"][0], 3.0)
@@ -194,8 +221,8 @@ class VectorServiceTests(unittest.TestCase):
         self.assertEqual(
             fake_client.last_delete_ids,
             [
-                {"index": "knowledge_chunks_7", "id": "v1", "refresh": "wait_for"},
-                {"index": "knowledge_chunks_7", "id": "v2", "refresh": "wait_for"},
+                {"index": "knowledge_chunks_7_active", "id": "v1", "refresh": "wait_for"},
+                {"index": "knowledge_chunks_7_active", "id": "v2", "refresh": "wait_for"},
             ],
         )
 
@@ -232,6 +259,7 @@ class VectorServiceTests(unittest.TestCase):
             vector_service.get_embedding_model = lambda: FakeEmbeddingModel()
             vector_service.get_settings = lambda: self.build_settings()
             hits = vector_service.search_similar_chunks(
+                organization_id=7,
                 knowledge_base_id=1,
                 query="报销流程",
                 top_k=3,
@@ -246,10 +274,17 @@ class VectorServiceTests(unittest.TestCase):
         self.assertEqual(hits[0].document_id, 2)
         self.assertEqual(hits[0].knowledge_item_id, 3)
         self.assertEqual(hits[0].score, 0.91)
-        self.assertEqual(fake_client.last_search["index"], "knowledge_chunks_1")
+        self.assertEqual(fake_client.last_search["index"], "knowledge_chunks_1_active")
         self.assertEqual(fake_client.last_search["size"], 3)
         self.assertEqual(len(fake_client.last_search["knn"]["query_vector"]), 1024)
         self.assertEqual(fake_client.last_search["knn"]["query_vector"][0], 4.0)
+        self.assertEqual(
+            fake_client.last_search["knn"]["filter"],
+            [
+                {"term": {"organization_id": 7}},
+                {"term": {"knowledge_base_id": 1}},
+            ],
+        )
 
     def test_parse_chunk_metadata_returns_empty_dict_on_invalid_json(self) -> None:
         self.assertEqual(vector_service.parse_chunk_metadata("{bad json"), {})

@@ -16,8 +16,10 @@ from app.db.database import get_session
 from app.db.models import Chunk, KnowledgeBase, KnowledgeItem
 from app.main import app
 from app.api import knowledge_item as knowledge_item_api
+from app.security.dependencies import get_current_principal
 from app.services.document_splitter.models import ChunkData
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class FakeIndexResult:
@@ -39,7 +41,17 @@ class KnowledgeItemApiTests(unittest.TestCase):
         self.client = TestClient(app)
 
         with Session(self.engine) as session:
-            knowledge_base = KnowledgeBase(name="知识库A", description="knowledge item api test")
+            self.principal = create_test_identity(session)
+            app.dependency_overrides[get_current_principal] = lambda: self.principal
+            ownership = {
+                "organization_id": self.principal.organization_id,
+                "created_by_user_id": self.principal.user_id,
+            }
+            knowledge_base = KnowledgeBase(
+                name="知识库A",
+                description="knowledge item api test",
+                **ownership,
+            )
             session.add(knowledge_base)
             session.commit()
             session.refresh(knowledge_base)
@@ -52,6 +64,7 @@ class KnowledgeItemApiTests(unittest.TestCase):
                 tags="测试",
                 status="active",
                 source_type="manual",
+                **ownership,
             )
             session.add(knowledge_item)
             session.commit()
@@ -65,6 +78,7 @@ class KnowledgeItemApiTests(unittest.TestCase):
                 tags="索引",
                 status="draft",
                 source_type="manual",
+                **ownership,
             )
             session.add(indexable_item)
             session.commit()
@@ -79,6 +93,7 @@ class KnowledgeItemApiTests(unittest.TestCase):
                 content="第一段 chunk",
                 vector_id="vector_1",
                 metadata_json='{"heading_path":["测试条目"]}',
+                organization_id=self.principal.organization_id,
             )
             second_chunk = Chunk(
                 knowledge_base_id=knowledge_base.id,
@@ -88,6 +103,7 @@ class KnowledgeItemApiTests(unittest.TestCase):
                 content="第二段 chunk",
                 vector_id="vector_2",
                 metadata_json='{"heading_path":["测试条目"]}',
+                organization_id=self.principal.organization_id,
             )
             session.add(first_chunk)
             session.add(second_chunk)

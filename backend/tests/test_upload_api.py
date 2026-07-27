@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from app.config import Settings
 from app.db.models import Document, KnowledgeBase, UploadPart, UploadProcessingJob, UploadTask
 from app.main import app
+from app.security.dependencies import get_current_principal
 from app.schemas.upload import UploadInitRequest
 from app.services import upload_celery_service
 from app.services import upload_postprocess_service
@@ -19,6 +20,7 @@ from app.services.storage.provider import get_object_storage_adapter
 from app.services.upload_service import get_upload_task_or_404, init_upload_task
 from app.tasks import upload_tasks
 from tests.postgres_test_utils import PostgresTestDatabase
+from tests.resource_authorization_utils import create_test_identity
 
 
 class FakeStorageAdapter:
@@ -196,7 +198,16 @@ class UploadApiTests(unittest.TestCase):
             )
 
         with Session(self.engine) as session:
-            session.add(KnowledgeBase(name="测试知识库", description="upload test"))
+            self.principal = create_test_identity(session)
+            app.dependency_overrides[get_current_principal] = lambda: self.principal
+            session.add(
+                KnowledgeBase(
+                    name="测试知识库",
+                    description="upload test",
+                    organization_id=self.principal.organization_id,
+                    created_by_user_id=self.principal.user_id,
+                )
+            )
             session.commit()
 
     def tearDown(self) -> None:
@@ -297,7 +308,7 @@ class UploadApiTests(unittest.TestCase):
             self.assertEqual(task.total_parts, 140)
             self.assertEqual(
                 task.object_key,
-                f"raw/dev/1/{upload_id}/source.pdf",
+                f"raw/dev/{self.principal.organization_id}/1/{upload_id}/source.pdf",
             )
 
     def test_get_upload_task_returns_404_for_missing_task(self) -> None:
@@ -725,12 +736,17 @@ class UploadApiTests(unittest.TestCase):
     def test_worker_claim_prevents_duplicate_claims_before_lease_expires(self) -> None:
         with Session(self.engine) as session:
             task = UploadTask(
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
                 upload_id="upl_claim_once",
                 knowledge_base_id=1,
                 original_filename="policy.txt",
                 storage_provider="aliyun-oss",
                 bucket_name="ai-knowledge-hub-xueyuan-dev",
-                object_key="raw/dev/1/upl_claim_once/source.txt",
+                object_key=(
+                    f"raw/dev/{self.principal.organization_id}/1/"
+                    "upl_claim_once/source.txt"
+                ),
                 file_type="txt",
                 file_size=1024,
                 part_size=5242880,
@@ -823,6 +839,8 @@ class UploadApiTests(unittest.TestCase):
                             filename="policy.pdf",
                             file_size=100,
                         ),
+                        organization_id=self.principal.organization_id,
+                        created_by_user_id=self.principal.user_id,
                         session=session,
                         settings=self.settings,
                         storage=self.fake_storage,
@@ -835,12 +853,17 @@ class UploadApiTests(unittest.TestCase):
     def test_upload_parts_unique_constraint(self) -> None:
         with Session(self.engine) as session:
             task = UploadTask(
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
                 upload_id="upl_constraint",
                 knowledge_base_id=1,
                 original_filename="policy.pdf",
                 storage_provider="aliyun-oss",
                 bucket_name="ai-knowledge-hub-xueyuan-dev",
-                object_key="raw/dev/1/upl_constraint/source.pdf",
+                object_key=(
+                    f"raw/dev/{self.principal.organization_id}/1/"
+                    "upl_constraint/source.pdf"
+                ),
                 file_type="pdf",
                 file_size=1024,
                 part_size=5242880,
