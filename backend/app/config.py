@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # 当前运行环境：development / testing / production。
     app_env: str = "development"
 
+    # 标准 logging 的最低输出级别。U7 会统一转成 JSON 日志。
+    log_level: str = "INFO"
+
     # 允许跨域访问的前端来源，多个值用逗号分隔。
     # 例如：http://localhost:3000,http://127.0.0.1:3000
     cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"

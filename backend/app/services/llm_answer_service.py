@@ -1,9 +1,11 @@
 import json
+import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
 from urllib import error, request
 
 from app.config import get_settings
+from app.observability.metrics import get_metrics
 from app.services import rag_service
 
 
@@ -42,6 +44,7 @@ def generate_answer(
     context = rag_service.format_context(documents)
     messages = build_answer_messages(question, context)
 
+    started_at = time.perf_counter()
     try:
         raw_output = call_openai_compatible_chat(
             base_url=settings.base_url,
@@ -52,7 +55,14 @@ def generate_answer(
         )
         structured = parse_answer_output(raw_output)
     except RuntimeError:
+        get_metrics().record_operation(
+            "llm_answer", time.perf_counter() - started_at, outcome="error"
+        )
         return fallback_result
+
+    get_metrics().record_operation(
+        "llm_answer", time.perf_counter() - started_at, outcome="success"
+    )
 
     if structured is None or not structured.answer.strip():
         return fallback_result
@@ -98,6 +108,7 @@ def stream_answer(
     messages = build_answer_messages(question, context)
     raw_output_parts: list[str] = []
     streamed_answer = ""
+    started_at = time.perf_counter()
 
     try:
         for delta in call_openai_compatible_chat_stream(
@@ -120,14 +131,24 @@ def stream_answer(
                 for character in next_delta:
                     yield StreamAnswerEvent(event="delta", text=character)
     except RuntimeError:
+        get_metrics().record_operation(
+            "llm_answer_stream", time.perf_counter() - started_at, outcome="error"
+        )
         yield from stream_fallback_result(fallback_result)
         return
 
     raw_output = "".join(raw_output_parts)
     structured = parse_answer_output(raw_output)
     if structured is None or not structured.answer.strip():
+        get_metrics().record_operation(
+            "llm_answer_stream", time.perf_counter() - started_at, outcome="invalid_response"
+        )
         yield from stream_fallback_result(fallback_result)
         return
+
+    get_metrics().record_operation(
+        "llm_answer_stream", time.perf_counter() - started_at, outcome="success"
+    )
 
     citations = build_citations_from_context_numbers(
         documents,
@@ -255,10 +276,8 @@ def call_openai_compatible_chat(
         with request.urlopen(http_request, timeout=timeout_seconds) as response:
             response_body = response.read().decode("utf-8")
     except error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(
-            f"llm answer http error: status={exc.code}, body={error_body}"
-        ) from exc
+        # Provider 错误正文可能回显请求内容或敏感配置，不能进入异常日志。
+        raise RuntimeError(f"llm answer http error: status={exc.code}") from exc
     except error.URLError as exc:
         raise RuntimeError(f"llm answer network error: {exc.reason}") from exc
 
@@ -320,10 +339,8 @@ def call_openai_compatible_chat_stream(
                 if delta_text:
                     yield delta_text
     except error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(
-            f"llm answer stream http error: status={exc.code}, body={error_body}"
-        ) from exc
+        # 流式响应的错误正文同样不直接记录，避免泄露上游敏感信息。
+        raise RuntimeError(f"llm answer stream http error: status={exc.code}") from exc
     except error.URLError as exc:
         raise RuntimeError(f"llm answer stream network error: {exc.reason}") from exc
 

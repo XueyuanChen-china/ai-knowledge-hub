@@ -18,6 +18,7 @@ from app.api.document import (
 from app.config import Settings
 from app.db.database import engine
 from app.db.models import Chunk, Document, UploadProcessingJob, UploadTask
+from app.observability.metrics import get_metrics
 from app.services.storage.base import DownloadObjectResult
 from app.services.storage.provider import get_object_storage_adapter
 from app.services.upload_audit_service import log_upload_event
@@ -227,6 +228,7 @@ def create_processing_job(
         },
     )
     session.commit()
+    get_metrics().record_upload_job(job.stage, job.status)
     return job
 
 
@@ -412,6 +414,7 @@ def schedule_job_retry(
         },
     )
     session.commit()
+    get_metrics().record_upload_job(job.stage, job.status)
     session.refresh(job)
     session.refresh(upload_task)
     if document is not None:
@@ -544,6 +547,7 @@ def run_download_stage_job(
             session.commit()
             session.refresh(job)
             session.refresh(upload_task)
+            get_metrics().record_upload_job(JOB_STAGE_DOWNLOAD, JOB_STATUS_COMPLETED)
 
             if continue_pipeline:
                 advance_pipeline_after_stage(
@@ -807,6 +811,7 @@ def run_pipeline_stage_job(
             session.commit()
             session.refresh(job)
             session.refresh(upload_task)
+            get_metrics().record_upload_job(job.stage, JOB_STATUS_COMPLETED)
 
             advance_pipeline_after_stage(
                 upload_task=upload_task,
@@ -997,6 +1002,7 @@ def run_processing_job(
             session.commit()
             session.refresh(job)
             session.refresh(upload_task)
+            get_metrics().record_upload_job(job.stage, JOB_STATUS_COMPLETED)
 
             return UploadPostprocessResult(
                 document_id=document.id if document is not None else upload_task.document_id,

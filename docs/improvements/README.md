@@ -23,3 +23,5 @@
 - [U3.5：账号管理、会话安全与审计](./enterprise-readiness/u3.5-account-management.md)
 - [U4：跨存储授权边界](./enterprise-readiness/u4-resource-authorization.md)
 - [U5：持久化 LangGraph Checkpoint](./enterprise-readiness/u5-persistent-langgraph-checkpoints.md)
+- [U6：统一容器化环境与 CI](./enterprise-readiness/u6-containerization-and-ci.md)
+- [U7：可观测性与运维闭环](./enterprise-readiness/u7-observability-and-operations.md)

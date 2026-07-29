@@ -86,6 +86,17 @@ cp .env.example .env
 
 ### 2. 启动本地依赖
 
+推荐使用统一容器栈：
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+它会统一启动 PostgreSQL、Elasticsearch、RabbitMQ、Redis、API、Celery Worker 和前端。完整配置、外部 OSS/LLM 密钥与排障方式见 [本地容器栈说明](docs/operations/local-stack.md)。
+
+如果需要沿用拆分启动方式：
+
 ```bash
 bash scripts/start_postgres_local.sh
 bash scripts/start_rabbitmq_local.sh

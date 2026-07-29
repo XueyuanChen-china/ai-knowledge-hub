@@ -1,0 +1,9 @@
+# 本文件只表达本地开发的轻量默认值。生产近似环境可通过 compose.yml
+# 及外部环境变量覆盖端口、密钥、模型和 OSS 配置，不需要修改镜像定义。
+services:
+  backend:
+    environment:
+      LOG_LEVEL: debug
+  worker:
+    environment:
+      CELERY_LOG_LEVEL: info

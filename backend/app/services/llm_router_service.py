@@ -1,10 +1,12 @@
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Optional
 from urllib import error, request
 
 from app.config import get_settings
+from app.observability.metrics import get_metrics
 
 DIRECT_ROUTE = "direct"
 RAG_ROUTE = "rag"
@@ -37,6 +39,7 @@ def route_question_with_llm(
 
     messages = build_router_messages(question, knowledge_base_id)
 
+    started_at = time.perf_counter()
     try:
         raw_output = call_openai_compatible_chat(
             base_url=settings.llm_router_base_url,
@@ -46,7 +49,14 @@ def route_question_with_llm(
             timeout_seconds=settings.llm_router_timeout_seconds,
         )
     except RuntimeError:
+        get_metrics().record_operation(
+            "llm_router", time.perf_counter() - started_at, outcome="error"
+        )
         return None
+
+    get_metrics().record_operation(
+        "llm_router", time.perf_counter() - started_at, outcome="success"
+    )
 
     return parse_router_output(raw_output)
 
@@ -128,10 +138,8 @@ def call_openai_compatible_chat(
         with request.urlopen(http_request, timeout=timeout_seconds) as response:
             response_body = response.read().decode("utf-8")
     except error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(
-            f"llm router http error: status={exc.code}, body={error_body}"
-        ) from exc
+        # Provider 错误正文可能回显请求内容或敏感配置，不能进入异常日志。
+        raise RuntimeError(f"llm router http error: status={exc.code}") from exc
     except error.URLError as exc:
         raise RuntimeError(f"llm router network error: {exc.reason}") from exc
 

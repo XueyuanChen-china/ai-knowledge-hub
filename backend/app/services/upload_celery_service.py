@@ -6,6 +6,7 @@ from sqlmodel import Session
 
 from app.config import Settings
 from app.db.models import UploadProcessingJob, UploadTask
+from app.observability.context import bind_context, get_request_id, get_trace_id, new_correlation_id
 from app.services.upload_audit_service import log_upload_event
 from app.tasks.upload_tasks import (
     upload_download_stage_task,
@@ -50,6 +51,22 @@ STAGE_TASKS = {
 }
 
 
+def build_upload_task_headers(
+    job: UploadProcessingJob,
+    upload_task: UploadTask,
+) -> dict[str, str]:
+    """把 HTTP trace 透传到 Celery，后续 stage 继续复用同一个 trace。"""
+
+    trace_id = get_trace_id() or new_correlation_id()
+    request_id = get_request_id() or trace_id
+    return {
+        "request_id": request_id,
+        "trace_id": trace_id,
+        "upload_id": upload_task.upload_id,
+        "processing_job_id": str(job.id or ""),
+    }
+
+
 def dispatch_upload_hello_task(
     *,
     processing_job_id: int,
@@ -73,11 +90,14 @@ def dispatch_upload_hello_task(
             detail="Upload task not found for processing job",
         )
 
-    async_result = upload_hello_task.apply_async(
-        args=[job.id],
-        kwargs={"message": message},
-        queue=settings.celery_task_default_queue,
-    )
+    headers = build_upload_task_headers(job, upload_task)
+    with bind_context(**headers):
+        async_result = upload_hello_task.apply_async(
+            args=[job.id],
+            kwargs={"message": message},
+            queue=settings.celery_task_default_queue,
+            headers=headers,
+        )
 
     now = datetime.utcnow()
     job.celery_task_id = str(async_result.id)
@@ -139,10 +159,13 @@ def dispatch_upload_download_stage_job(
             detail="Upload task not found for processing job",
         )
 
-    async_result = upload_download_stage_task.apply_async(
-        args=[job.id],
-        queue=settings.celery_task_default_queue,
-    )
+    headers = build_upload_task_headers(job, upload_task)
+    with bind_context(**headers):
+        async_result = upload_download_stage_task.apply_async(
+            args=[job.id],
+            queue=settings.celery_task_default_queue,
+            headers=headers,
+        )
 
     now = datetime.utcnow()
     job.celery_task_id = str(async_result.id)
@@ -201,10 +224,13 @@ def dispatch_upload_stage_job(
             detail="Upload task not found for processing job",
         )
 
-    async_result = task.apply_async(
-        args=[job.id],
-        queue=settings.celery_task_default_queue,
-    )
+    headers = build_upload_task_headers(job, upload_task)
+    with bind_context(**headers):
+        async_result = task.apply_async(
+            args=[job.id],
+            queue=settings.celery_task_default_queue,
+            headers=headers,
+        )
     now = datetime.utcnow()
     job.celery_task_id = str(async_result.id)
     job.current_step = f"celery_{job.stage}_dispatched"

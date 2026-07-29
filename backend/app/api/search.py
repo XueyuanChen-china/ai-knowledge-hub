@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+import time
 from sqlmodel import Session, select
 
 from app.db.database import get_session
 from app.db.models import KnowledgeBase, KnowledgeItem
 from app.schemas.search import SemanticSearchRequest, SemanticSearchResult
 from app.services.vector_service import search_similar_chunks
+from app.observability.metrics import get_metrics
 from app.security.dependencies import Principal, require_permission
 from app.security.policies import PERMISSION_SEARCH
 from app.security.resource_access import get_knowledge_base_or_404
@@ -67,11 +69,25 @@ def semantic_search(
             detail="Query must not be empty",
         )
 
-    hits = search_similar_chunks(
-        principal.organization_id,
-        payload.knowledge_base_id,
-        query_text,
-        top_k=payload.top_k,
+    started_at = time.perf_counter()
+    try:
+        hits = search_similar_chunks(
+            principal.organization_id,
+            payload.knowledge_base_id,
+            query_text,
+            top_k=payload.top_k,
+        )
+    except Exception:
+        get_metrics().record_operation(
+            "semantic_search",
+            time.perf_counter() - started_at,
+            outcome="error",
+        )
+        raise
+    get_metrics().record_operation(
+        "semantic_search",
+        time.perf_counter() - started_at,
+        outcome="success",
     )
 
     knowledge_item_ids = {

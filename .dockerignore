@@ -1,0 +1,31 @@
+.git
+.github
+.DS_Store
+
+# 本地密钥和开发环境不能进入任何构建上下文。
+.env
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# 本地依赖、构建产物和缓存由镜像构建阶段重新生成。
+backend/.venv
+frontend/node_modules
+frontend/dist
+frontend/.next
+**/__pycache__
+**/*.py[cod]
+
+# 原始上传文件、测试数据和本地数据库不应进入生产镜像。
+backend/data/uploads
+backend/data/sqlite
+backend/data/chroma_smoke_test
+backend/data/sample_index_files
+backend/tests
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# 文档和本地 IDE 配置不属于运行时镜像。
+docs
+CLAUDE.md
