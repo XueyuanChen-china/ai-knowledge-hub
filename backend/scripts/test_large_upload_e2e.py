@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import mimetypes
+import os
 import sys
 import time
 import urllib.error
@@ -12,9 +13,17 @@ import urllib.request
 from pathlib import Path
 
 
-def request_json(base_url: str, path: str, method: str, payload=None):
+def request_json(
+    base_url: str,
+    path: str,
+    method: str,
+    payload=None,
+    access_token: str = "",
+):
     body = None
     headers = {"Accept": "application/json"}
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -63,7 +72,13 @@ def sha256_file(file_path: Path) -> str:
     return digest.hexdigest()
 
 
-def upload_file(base_url: str, knowledge_base_id: int, file_path: Path, created_by: str) -> str:
+def upload_file(
+    base_url: str,
+    knowledge_base_id: int,
+    file_path: Path,
+    created_by: str,
+    access_token: str = "",
+) -> str:
     file_size = file_path.stat().st_size
     file_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
     file_sha256 = sha256_file(file_path)
@@ -80,6 +95,7 @@ def upload_file(base_url: str, knowledge_base_id: int, file_path: Path, created_
             "file_sha256": file_sha256,
             "created_by": created_by,
         },
+        access_token=access_token,
     )
     upload_id = init["upload_id"]
     part_size = int(init["part_size"])
@@ -94,6 +110,7 @@ def upload_file(base_url: str, knowledge_base_id: int, file_path: Path, created_
                 f"/uploads/{upload_id}/parts/presign",
                 "POST",
                 {"part_number": part_number},
+                access_token=access_token,
             )
             etag = put_part(presign["presigned_url"], part, file_type)
             request_json(
@@ -105,6 +122,7 @@ def upload_file(base_url: str, knowledge_base_id: int, file_path: Path, created_
                     "etag": etag,
                     "part_size": len(part),
                 },
+                access_token=access_token,
             )
             print(f"part {part_number}/{total_parts} uploaded etag={etag}")
 
@@ -113,6 +131,7 @@ def upload_file(base_url: str, knowledge_base_id: int, file_path: Path, created_
         f"/uploads/{upload_id}/complete",
         "POST",
         {"expected_total_parts": total_parts},
+        access_token=access_token,
     )
     print(json.dumps(completed, ensure_ascii=False, indent=2))
     return upload_id
@@ -124,10 +143,17 @@ def wait_for_index(
     upload_id: str,
     filename: str,
     timeout_seconds: int,
+    access_token: str = "",
 ) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        upload = request_json(base_url, f"/uploads/{upload_id}", "GET")
+        upload = request_json(
+            base_url,
+            f"/uploads/{upload_id}",
+            "GET",
+            access_token=access_token,
+        )
+        upload_document_id = upload.get("document_id")
         print(
             f"upload status={upload['status']} "
             f"processing_status={upload['processing_status']} "
@@ -137,10 +163,20 @@ def wait_for_index(
             base_url,
             f"/documents?knowledge_base_id={knowledge_base_id}",
             "GET",
+            access_token=access_token,
         )
         matching = [item for item in documents if item["filename"] == filename]
-        if matching and matching[0]["status"] == "indexed":
-            print(f"PASS: document {matching[0]['id']} is indexed")
+        current = next(
+            (
+                item
+                for item in matching
+                if upload_document_id is not None
+                and item.get("id") == upload_document_id
+            ),
+            None,
+        )
+        if current and current["status"] == "indexed":
+            print(f"PASS: document {current['id']} is indexed")
             return
         if upload["processing_status"] == "failed":
             raise RuntimeError(upload.get("processing_error_message") or "processing failed")
@@ -155,6 +191,11 @@ def main() -> int:
     parser.add_argument("--knowledge-base-id", type=int, required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--created-by", default="e2e-test")
+    parser.add_argument(
+        "--access-token",
+        default=os.getenv("E2E_ACCESS_TOKEN", ""),
+        help="后端 Bearer token，也可以通过 E2E_ACCESS_TOKEN 提供",
+    )
     parser.add_argument("--timeout", type=int, default=900)
     args = parser.parse_args()
 
@@ -166,6 +207,7 @@ def main() -> int:
         args.knowledge_base_id,
         args.file,
         args.created_by,
+        args.access_token,
     )
     wait_for_index(
         args.base_url,
@@ -173,6 +215,7 @@ def main() -> int:
         upload_id,
         args.file.name,
         args.timeout,
+        args.access_token,
     )
     return 0
 
@@ -180,6 +223,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (RuntimeError, TimeoutError) as exc:
+    except (RuntimeError, TimeoutError, urllib.error.URLError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         raise SystemExit(1)

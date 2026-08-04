@@ -25,3 +25,5 @@
 - [U5：持久化 LangGraph Checkpoint](./enterprise-readiness/u5-persistent-langgraph-checkpoints.md)
 - [U6：统一容器化环境与 CI](./enterprise-readiness/u6-containerization-and-ci.md)
 - [U7：可观测性与运维闭环](./enterprise-readiness/u7-observability-and-operations.md)
+- [U9：前端质量与测试](./u9-frontend-quality-and-testing.md)
+- [U10：最终 E2E 与项目证据](./enterprise-readiness/u10-final-e2e-and-evidence.md)

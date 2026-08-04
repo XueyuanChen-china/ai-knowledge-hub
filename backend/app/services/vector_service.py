@@ -28,6 +28,13 @@ class SemanticSearchHit:
     content: str
     score: float
     metadata: dict[str, Any]
+    # U8 检索链路会把 dense、BM25、RRF 和 rerank 的证据一并保留下来。
+    # score 表示当前排序阶段使用的最终分数；原始分数不能被覆盖丢失。
+    retrieval_sources: tuple[str, ...] = ()
+    dense_score: Optional[float] = None
+    bm25_score: Optional[float] = None
+    rrf_score: Optional[float] = None
+    rerank_score: Optional[float] = None
 
 
 def build_stable_vector_id(chunk: Chunk) -> str:
@@ -171,12 +178,82 @@ def search_similar_chunks(
             "query_vector": query_vector,
             "k": top_k,
             "num_candidates": num_candidates,
-            "filter": [
-                {"term": {"organization_id": organization_id}},
-                {"term": {"knowledge_base_id": knowledge_base_id}},
-            ],
+            "filter": build_retrieval_scope_filters(
+                organization_id=organization_id,
+                knowledge_base_id=knowledge_base_id,
+            ),
         },
     )
+
+    return parse_search_hits(response, retrieval_source="dense")
+
+
+def search_bm25_chunks(
+    organization_id: int,
+    knowledge_base_id: int,
+    query: str,
+    *,
+    top_k: int = 5,
+) -> list[SemanticSearchHit]:
+    """使用 Elasticsearch BM25 检索正文。
+
+    Dense 与 BM25 必须共享相同的组织、知识库过滤条件；否则 RRF 融合前就可能
+    混入无权数据。这里显式复用 build_retrieval_scope_filters()。
+    """
+
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise ValueError("query must not be empty")
+
+    index_name = build_index_name(knowledge_base_id)
+    client = get_elasticsearch_client()
+    if not client.indices.exists(index=index_name):
+        return []
+
+    response = client.search(
+        index=index_name,
+        size=top_k,
+        query={
+            "bool": {
+                "must": [
+                    {
+                        "match": {
+                            "content": {
+                                "query": normalized_query,
+                            }
+                        }
+                    }
+                ],
+                "filter": build_retrieval_scope_filters(
+                    organization_id=organization_id,
+                    knowledge_base_id=knowledge_base_id,
+                ),
+            }
+        },
+    )
+
+    return parse_search_hits(response, retrieval_source="bm25")
+
+
+def build_retrieval_scope_filters(
+    *,
+    organization_id: int,
+    knowledge_base_id: int,
+) -> list[dict[str, dict[str, int]]]:
+    """构造所有检索器共用的 ES 授权范围过滤。"""
+
+    return [
+        {"term": {"organization_id": organization_id}},
+        {"term": {"knowledge_base_id": knowledge_base_id}},
+    ]
+
+
+def parse_search_hits(
+    response: dict[str, Any],
+    *,
+    retrieval_source: str,
+) -> list[SemanticSearchHit]:
+    """把 ES 命中统一转换为带来源证据的检索结果。"""
 
     hits: list[SemanticSearchHit] = []
     for raw_hit in response.get("hits", {}).get("hits", []):
@@ -186,6 +263,7 @@ def search_similar_chunks(
         if chunk_id is None:
             chunk_id = metadata.get("chunk_id")
 
+        raw_score = float(raw_hit.get("_score", 0.0))
         hits.append(
             SemanticSearchHit(
                 vector_id=source.get("vector_id", raw_hit.get("_id", "")),
@@ -193,8 +271,11 @@ def search_similar_chunks(
                 document_id=source.get("document_id"),
                 knowledge_item_id=source.get("knowledge_item_id"),
                 content=source.get("content", ""),
-                score=float(raw_hit.get("_score", 0.0)),
+                score=raw_score,
                 metadata=metadata,
+                retrieval_sources=(retrieval_source,),
+                dense_score=raw_score if retrieval_source == "dense" else None,
+                bm25_score=raw_score if retrieval_source == "bm25" else None,
             )
         )
 

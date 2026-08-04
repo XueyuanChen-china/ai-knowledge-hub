@@ -726,11 +726,18 @@ flowchart LR
 - `docs/operations/backup-and-recovery.md`
 - `docs/operations/enterprise-readiness-evidence.md`
 - `docs/improvements/README.md`
+- `docs/improvements/multiformat-e2e-test-dataset-requirements.md`
+- `backend/tests/fixtures/multiformat_e2e/source/*`
+- `backend/tests/fixtures/multiformat_e2e/manifest.json`
+- `backend/tests/fixtures/multiformat_e2e/queries.json`
+- `backend/tests/fixtures/multiformat_e2e/expected/*`
 
 **Approach:**
 
 - 提供不包含真实 secret 的 demo seed，生成组织、四种角色、知识库和可检索样本。
-- 自动化 happy path 覆盖 login -> upload -> stages -> indexed -> search -> chat -> citations。
+- 自动化 happy path 覆盖 login -> 上传 TXT/MD/PDF/DOCX/XLSX -> OSS -> documents -> stages -> indexed -> search -> chat -> citations。
+- 多格式测试集必须按照 `multiformat-e2e-test-dataset-requirements.md` 生成，并使用 manifest 固定解析、切片和检索预期。
+- E2E 必须同时验证文件格式识别、Section/Block 结构、chunk metadata、PostgreSQL chunks、Elasticsearch vector_id 和最终引用。
 - 自动化 security path 覆盖 401、403、跨组织 ID、ES 权限过滤和 OSS presign 越权。
 - 自动化 restart path 覆盖 interrupt -> restart -> resume。
 - README 用架构图、快速启动、核心流程、技术取舍、测试方式和已知边界表达项目。
@@ -741,9 +748,11 @@ flowchart LR
 
 1. 干净 Compose 环境在规定步骤内完成 demo seed 和完整业务闭环。
 2. 四种角色的验收矩阵全部符合预期。
-3. Worker 重启、FastAPI 重启和一次可恢复的外部服务失败不会造成重复 document/chunk/message。
-4. 全部测试和构建在 CI 通过。
-5. 新开发者只阅读 README 和 operations docs 即可运行、测试、定位失败任务。
+3. TXT、Markdown、PDF、DOCX、XLSX 五种文件都能完成上传、解析、切片、索引和检索；每种格式的 manifest 预期通过。
+4. Worker 重启、FastAPI 重启和一次可恢复的外部服务失败不会造成重复 document/chunk/message。
+5. 无答案问题进入 no-answer 或 human review，跨组织问题不返回受限证据。
+6. 全部测试和构建在 CI 通过。
+7. 新开发者只阅读 README 和 operations docs 即可运行、测试、定位失败任务。
 
 **Verification:**
 

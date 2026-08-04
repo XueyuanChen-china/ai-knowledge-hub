@@ -22,29 +22,29 @@ class SearchPermissionTests(ResourceAuthorizationTestCase, unittest.TestCase):
 
     def test_search_rejects_another_organization_knowledge_base_before_es(self) -> None:
         called = False
-        original_search = search_api.search_similar_chunks
+        original_search = search_api.retrieve_hybrid_chunks
         try:
             def fail_if_called(*args, **kwargs):
                 nonlocal called
                 called = True
                 return []
 
-            search_api.search_similar_chunks = fail_if_called
+            search_api.retrieve_hybrid_chunks = fail_if_called
             response = self.client.post(
                 "/search/semantic",
                 json={"knowledge_base_id": self.knowledge_base_b_id, "query": "private"},
             )
         finally:
-            search_api.search_similar_chunks = original_search
+            search_api.retrieve_hybrid_chunks = original_search
 
         self.assertEqual(response.status_code, 404)
         self.assertFalse(called)
 
     def test_search_passes_organization_filter_to_vector_service(self) -> None:
         captured = {}
-        original_search = search_api.search_similar_chunks
+        original_search = search_api.retrieve_hybrid_chunks
         try:
-            def fake_search(organization_id, knowledge_base_id, query, *, top_k):
+            def fake_search(*, organization_id, knowledge_base_id, query, top_k):
                 captured.update(
                     organization_id=organization_id,
                     knowledge_base_id=knowledge_base_id,
@@ -63,13 +63,13 @@ class SearchPermissionTests(ResourceAuthorizationTestCase, unittest.TestCase):
                     )
                 ]
 
-            search_api.search_similar_chunks = fake_search
+            search_api.retrieve_hybrid_chunks = fake_search
             response = self.client.post(
                 "/search/semantic",
                 json={"knowledge_base_id": self.knowledge_base_a_id, "query": "evidence"},
             )
         finally:
-            search_api.search_similar_chunks = original_search
+            search_api.retrieve_hybrid_chunks = original_search
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(captured["organization_id"], self.organization_a_id)

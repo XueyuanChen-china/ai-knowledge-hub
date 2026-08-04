@@ -109,6 +109,18 @@ class Settings(BaseSettings):
     # 一次 embedding 的批大小。
     embedding_batch_size: int = 16
 
+    # U8 混合检索候选池配置。Dense 与 BM25 分别召回后，再做 RRF 融合。
+    retrieval_dense_candidate_k: int = 20
+    retrieval_bm25_candidate_k: int = 20
+    retrieval_rrf_k: int = 60
+
+    # U8 固定使用 BGE reranker。首次启动会加载独立模型，部署时应先完成模型预热。
+    retrieval_reranker_provider: str = "bge"
+    retrieval_reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    retrieval_reranker_device: str = "cpu"
+    retrieval_rerank_top_n: int = 20
+    retrieval_rerank_score_threshold: float = 0.78
+
     # LLM Router 的 OpenAI 兼容 Base URL。
     # 例如 DashScope / Model Studio 的 compatible-mode/v1 地址。
     llm_router_base_url: str = ""
@@ -133,10 +145,6 @@ class Settings(BaseSettings):
 
     # Answer Node 请求超时时间，单位秒。
     llm_answer_timeout_seconds: int = 40
-
-    # Relevance Check 的低分阈值。
-    # 如果 top score 低于这个值，就先不直接编答案，而是标记 need_human_review。
-    relevance_low_score_threshold: float = 0.78
 
     # 对象存储提供方。Phase 1 先固定支持阿里云 OSS。
     storage_provider: str = "aliyun-oss"
@@ -238,6 +246,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "amqp://guest:guest@localhost:5672//"
     celery_result_backend: str = ""
     celery_task_default_queue: str = "ai_knowledge_hub"
+
+    # embedding 使用独立队列，避免 BGE-M3 的模型加载拖慢普通阶段。
+    celery_embed_queue: str = "ai_knowledge_hub_embed"
 
     # RabbitMQ publisher confirm。Producer 发布后等待 Broker 返回确认，
     # 未确认时 apply_async 会抛出异常，调用方可以保留 job 为待投递状态并重试。

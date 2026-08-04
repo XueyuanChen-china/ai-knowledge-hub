@@ -5,7 +5,8 @@ from typing import Optional
 from sqlmodel import Session, select
 
 from app.db.models import KnowledgeBase, KnowledgeItem
-from app.services.vector_service import SemanticSearchHit, search_similar_chunks
+from app.services.retrieval_service import retrieve_hybrid_chunks
+from app.services.vector_service import SemanticSearchHit
 
 
 @dataclass
@@ -53,7 +54,7 @@ def retrieve(
         raise ValueError("knowledge base not found")
     resolved_organization_id = knowledge_base.organization_id
 
-    hits = search_similar_chunks(
+    hits = retrieve_hybrid_chunks(
         organization_id=resolved_organization_id,
         knowledge_base_id=knowledge_base_id,
         query=normalized_question,

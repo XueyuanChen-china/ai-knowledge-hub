@@ -46,12 +46,12 @@ need_review
 - 当前没有任何证据
 - 继续进入 `answer_node` 很容易变成硬答
 
-#### 第二层：`top score` 是否低于阈值
+#### 第二层：`rerank score` 是否低于阈值
 
 如果：
 
 ```text
-relevance_score < relevance_low_score_threshold
+rerank_score < retrieval_rerank_score_threshold
 ```
 
 也判成：
@@ -65,10 +65,10 @@ need_review
 [backend/app/config.py](/Users/xueyuanchen.x/Desktop/ai-knowledge-hub/backend/app/config.py:1)
 
 ```text
-relevance_low_score_threshold = 0.35
+retrieval_rerank_score_threshold = 0.78
 ```
 
-这样后面你调不同语料集时，可以改配置，不用改代码。
+这样后面你调不同语料集时，可以改配置，不用改代码。普通关键词不再作为硬门禁；只有金额、编号、数字和明确的产品标识等关键实体缺失时，才会额外进入人工审核。
 
 ---
 

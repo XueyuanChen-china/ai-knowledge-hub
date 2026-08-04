@@ -19,10 +19,12 @@ services:
       start_period: 5s
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.16.0
+    # 与当前本机已缓存镜像保持一致，避免本地 E2E 因重复拉取镜像被网络阻塞。
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
+      network.host: 0.0.0.0
       ES_JAVA_OPTS: -Xms512m -Xmx512m
     ports:
       - "${ELASTICSEARCH_PORT:-9200}:9200"
@@ -45,6 +47,8 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./docker/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -115,7 +119,26 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     command: ["./scripts/start_worker.sh"]
-    environment: *backend_environment
+    environment:
+      <<: *backend_environment
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-10}
+      CELERY_WORKER_QUEUES: ${CELERY_WORKER_QUEUES:-ai_knowledge_hub}
+    depends_on:
+      backend:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  embedding-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["./scripts/start_worker.sh"]
+    environment:
+      <<: *backend_environment
+      CELERY_WORKER_CONCURRENCY: ${CELERY_EMBED_WORKER_CONCURRENCY:-1}
+      CELERY_WORKER_QUEUES: ${CELERY_EMBED_QUEUE:-ai_knowledge_hub_embed}
     depends_on:
       backend:
         condition: service_healthy

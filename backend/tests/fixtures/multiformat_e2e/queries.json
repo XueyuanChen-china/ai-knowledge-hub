@@ -1,0 +1,631 @@
+[
+  {
+    "query_id": "fact-001",
+    "query": "AI 知识库重构项目的预算和负责人是谁？",
+    "category": "factual",
+    "expected_document_keys": [
+      "budget-risk-xlsx"
+    ],
+    "expected_keywords": [
+      "AI 知识库重构",
+      "135000",
+      "王璐"
+    ],
+    "expected_answer_contains": [
+      "135,000",
+      "王璐"
+    ]
+  },
+  {
+    "query_id": "fact-002",
+    "query": "风险 R-003 描述的是什么，影响等级如何？",
+    "category": "factual",
+    "expected_document_keys": [
+      "budget-risk-xlsx"
+    ],
+    "expected_keywords": [
+      "R-003",
+      "知识库数据权限配置错误",
+      "高"
+    ],
+    "expected_answer_contains": [
+      "知识库数据权限配置错误",
+      "高"
+    ]
+  },
+  {
+    "query_id": "fact-003",
+    "query": "P1 事件多久内通知值班负责人？",
+    "category": "factual",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "P1",
+      "15 分钟",
+      "值班负责人"
+    ],
+    "expected_answer_contains": [
+      "15 分钟"
+    ]
+  },
+  {
+    "query_id": "fact-004",
+    "query": "P1 事件多久内建立处置群？",
+    "category": "factual",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "P1",
+      "30 分钟",
+      "处置群"
+    ],
+    "expected_answer_contains": [
+      "30 分钟"
+    ]
+  },
+  {
+    "query_id": "fact-005",
+    "query": "普通员工报销必须提交哪三项基础材料？",
+    "category": "factual",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "发票",
+      "行程单",
+      "审批单"
+    ],
+    "expected_answer_contains": [
+      "发票",
+      "行程单",
+      "审批单"
+    ]
+  },
+  {
+    "query_id": "fact-006",
+    "query": "临时供应商准入最长多少天？",
+    "category": "factual",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "临时准入",
+      "15 个自然日"
+    ],
+    "expected_answer_contains": [
+      "15 个自然日"
+    ]
+  },
+  {
+    "query_id": "fact-007",
+    "query": "连续几天病假需要医疗证明？",
+    "category": "factual",
+    "expected_document_keys": [
+      "employee-handbook-docx"
+    ],
+    "expected_keywords": [
+      "连续 3 天",
+      "医疗证明"
+    ],
+    "expected_answer_contains": [
+      "3 天"
+    ]
+  },
+  {
+    "query_id": "fact-008",
+    "query": "云启科技的安全合规评分是多少？",
+    "category": "factual",
+    "expected_document_keys": [
+      "budget-risk-xlsx"
+    ],
+    "expected_keywords": [
+      "云启科技",
+      "4.8"
+    ],
+    "expected_answer_contains": [
+      "4.8"
+    ]
+  },
+  {
+    "query_id": "semantic-001",
+    "query": "哪些采购会因为接触用户资料而增加隐私审查？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "客户数据处理",
+      "安全问卷",
+      "隐私影响评估"
+    ],
+    "expected_answer_contains": [
+      "安全问卷",
+      "隐私影响评估"
+    ]
+  },
+  {
+    "query_id": "semantic-002",
+    "query": "发现公司账号有异常登录后第一步该怎么处理？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "employee-handbook-docx",
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "停止",
+      "联系",
+      "保留证据"
+    ],
+    "expected_answer_contains": [
+      "停止可疑操作",
+      "联系信息安全"
+    ]
+  },
+  {
+    "query_id": "semantic-003",
+    "query": "出差回来后要在多长时间内走完费用申请？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "行程结束",
+      "十个工作日",
+      "提交报销"
+    ],
+    "expected_answer_contains": [
+      "十个工作日"
+    ]
+  },
+  {
+    "query_id": "semantic-004",
+    "query": "合作方已经通过集团审核，本地项目能直接放行吗？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "复用",
+      "数据范围",
+      "系统权限",
+      "合同主体"
+    ],
+    "expected_answer_contains": [
+      "不能直接",
+      "差异评估"
+    ]
+  },
+  {
+    "query_id": "semantic-005",
+    "query": "员工换岗位时原来的系统权限怎么处理？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "employee-handbook-docx"
+    ],
+    "expected_keywords": [
+      "转岗",
+      "复核",
+      "原岗位权限"
+    ],
+    "expected_answer_contains": [
+      "复核原岗位权限"
+    ]
+  },
+  {
+    "query_id": "semantic-006",
+    "query": "安全事故恢复上线之前需要确认哪些事情？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "攻击路径",
+      "凭证",
+      "日志",
+      "业务验证"
+    ],
+    "expected_answer_contains": [
+      "攻击路径被阻断",
+      "凭证已轮换"
+    ]
+  },
+  {
+    "query_id": "semantic-007",
+    "query": "差旅票据丢了还能申请费用吗？",
+    "category": "semantic",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "票据缺失说明",
+      "支付凭证",
+      "负责人确认"
+    ],
+    "expected_answer_contains": [
+      "票据缺失说明",
+      "支付凭证"
+    ]
+  },
+  {
+    "query_id": "condition-001",
+    "query": "差旅金额达到什么条件要增加财务负责人审批？",
+    "category": "condition",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "超过 20,000 元",
+      "财务负责人"
+    ],
+    "expected_answer_contains": [
+      "超过 20,000 元"
+    ]
+  },
+  {
+    "query_id": "condition-002",
+    "query": "什么情况下客户数据供应商不得获得生产访问凭证？",
+    "category": "condition",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "安全问卷",
+      "PIA",
+      "通过之前"
+    ],
+    "expected_answer_contains": [
+      "安全问卷与 PIA 均通过之前"
+    ]
+  },
+  {
+    "query_id": "condition-003",
+    "query": "酒店价格什么时候允许上浮百分之二十？",
+    "category": "condition",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "展会",
+      "重大活动",
+      "上浮 20%"
+    ],
+    "expected_answer_contains": [
+      "展会",
+      "重大活动"
+    ]
+  },
+  {
+    "query_id": "condition-004",
+    "query": "什么情况会把供应商暂停新增订单？",
+    "category": "condition",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "重大数据事件",
+      "连续两个里程碑延期",
+      "材料造假"
+    ],
+    "expected_answer_contains": [
+      "重大数据事件"
+    ]
+  },
+  {
+    "query_id": "condition-005",
+    "query": "安全事件什么情况下需要升级等级？",
+    "category": "condition",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "影响扩大",
+      "持续外传",
+      "无法恢复"
+    ],
+    "expected_answer_contains": [
+      "影响扩大"
+    ]
+  },
+  {
+    "query_id": "process-001",
+    "query": "员工从申请出差到付款归档要经过哪些步骤？",
+    "category": "process",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "新建出差申请",
+      "收集",
+      "财务复核",
+      "付款"
+    ],
+    "expected_answer_contains": [
+      "出差申请",
+      "财务复核"
+    ]
+  },
+  {
+    "query_id": "process-002",
+    "query": "供应商正式准入的审批流程是什么？",
+    "category": "process",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "采购申请",
+      "比价",
+      "法务",
+      "信息安全",
+      "主数据"
+    ],
+    "expected_answer_contains": [
+      "采购申请",
+      "安全评审"
+    ]
+  },
+  {
+    "query_id": "process-003",
+    "query": "P1 安全事件发生后的前 30 分钟要做什么？",
+    "category": "process",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "15 分钟",
+      "30 分钟",
+      "处置群"
+    ],
+    "expected_answer_contains": [
+      "通知值班负责人",
+      "建立处置群"
+    ]
+  },
+  {
+    "query_id": "process-004",
+    "query": "员工离职时账号和资料如何完成闭环？",
+    "category": "process",
+    "expected_document_keys": [
+      "employee-handbook-docx"
+    ],
+    "expected_keywords": [
+      "资料交接",
+      "账号停用",
+      "设备归还"
+    ],
+    "expected_answer_contains": [
+      "账号停用",
+      "资料交接"
+    ]
+  },
+  {
+    "query_id": "process-005",
+    "query": "发生安全事件后怎么建立统一调查时间线？",
+    "category": "process",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "统一时间线",
+      "事实",
+      "假设",
+      "证据"
+    ],
+    "expected_answer_contains": [
+      "统一时间线"
+    ]
+  },
+  {
+    "query_id": "cross-001",
+    "query": "AI 知识库项目由谁负责，它对应的高等级风险是什么？",
+    "category": "cross_format",
+    "expected_document_keys": [
+      "budget-risk-xlsx"
+    ],
+    "expected_keywords": [
+      "王璐",
+      "R-003",
+      "知识库数据权限配置错误"
+    ],
+    "expected_answer_contains": [
+      "王璐",
+      "R-003"
+    ]
+  },
+  {
+    "query_id": "cross-002",
+    "query": "供应商处理客户数据时要做哪些评估，发生数据事件后多久通知？",
+    "category": "cross_format",
+    "expected_document_keys": [
+      "supplier-admission-md",
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "安全问卷",
+      "隐私影响评估",
+      "15 分钟"
+    ],
+    "expected_answer_contains": [
+      "安全问卷",
+      "15 分钟"
+    ]
+  },
+  {
+    "query_id": "cross-003",
+    "query": "员工误发客户数据后应按哪些制度采取行动？",
+    "category": "cross_format",
+    "expected_document_keys": [
+      "employee-handbook-docx",
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "停止",
+      "保留证据",
+      "通知"
+    ],
+    "expected_answer_contains": [
+      "停止可疑操作",
+      "通知"
+    ]
+  },
+  {
+    "query_id": "cross-004",
+    "query": "采购供应商评审和预算风险表都强调了哪些权限风险？",
+    "category": "cross_format",
+    "expected_document_keys": [
+      "supplier-admission-md",
+      "budget-risk-xlsx"
+    ],
+    "expected_keywords": [
+      "最小权限",
+      "R-003",
+      "非授权成员"
+    ],
+    "expected_answer_contains": [
+      "权限"
+    ]
+  },
+  {
+    "query_id": "noanswer-001",
+    "query": "公司食堂夜班补贴标准是多少？",
+    "category": "no_answer",
+    "expected_document_keys": [],
+    "expected_keywords": [],
+    "expected_answer_contains": []
+  },
+  {
+    "query_id": "noanswer-002",
+    "query": "员工购车补助每年是多少？",
+    "category": "no_answer",
+    "expected_document_keys": [],
+    "expected_keywords": [],
+    "expected_answer_contains": []
+  },
+  {
+    "query_id": "noanswer-003",
+    "query": "办公室停车位如何申请？",
+    "category": "no_answer",
+    "expected_document_keys": [],
+    "expected_keywords": [],
+    "expected_answer_contains": []
+  },
+  {
+    "query_id": "permission-001",
+    "query": "另一组织的董事会预算明细是什么？",
+    "category": "permission",
+    "expected_document_keys": [],
+    "expected_keywords": [],
+    "expected_answer_contains": [],
+    "allowed_organization": "org-demo",
+    "forbidden_organization": "org-restricted"
+  },
+  {
+    "query_id": "permission-002",
+    "query": "请返回其他租户上传中的供应商合同内容。",
+    "category": "permission",
+    "expected_document_keys": [],
+    "expected_keywords": [],
+    "expected_answer_contains": [],
+    "allowed_organization": "org-demo",
+    "forbidden_organization": "org-restricted"
+  },
+  {
+    "query_id": "permission-003",
+    "query": "能否读取未授权知识库里的客户名单？",
+    "category": "permission",
+    "expected_document_keys": [],
+    "expected_keywords": [],
+    "expected_answer_contains": [],
+    "allowed_organization": "org-demo",
+    "forbidden_organization": "org-restricted"
+  },
+  {
+    "query_id": "summary-001",
+    "query": "总结供应商准入的主要风险和控制措施。",
+    "category": "summary",
+    "expected_document_keys": [
+      "supplier-admission-md"
+    ],
+    "expected_keywords": [
+      "安全合规",
+      "合同责任",
+      "持续评估"
+    ],
+    "expected_answer_contains": [
+      "安全问卷",
+      "合同"
+    ]
+  },
+  {
+    "query_id": "summary-002",
+    "query": "概括差旅报销最容易被退回或审计关注的事项。",
+    "category": "summary",
+    "expected_document_keys": [
+      "travel-reimbursement-txt"
+    ],
+    "expected_keywords": [
+      "材料",
+      "超标",
+      "审批",
+      "重复票据"
+    ],
+    "expected_answer_contains": [
+      "审批",
+      "票据"
+    ]
+  },
+  {
+    "query_id": "summary-003",
+    "query": "总结 P1 安全事件从报告到复盘的关键节点。",
+    "category": "summary",
+    "expected_document_keys": [
+      "security-response-pdf"
+    ],
+    "expected_keywords": [
+      "15 分钟",
+      "30 分钟",
+      "恢复",
+      "复盘"
+    ],
+    "expected_answer_contains": [
+      "15 分钟",
+      "30 分钟"
+    ]
+  },
+  {
+    "query_id": "summary-004",
+    "query": "员工手册中与账号和数据安全有关的要求有哪些？",
+    "category": "summary",
+    "expected_document_keys": [
+      "employee-handbook-docx"
+    ],
+    "expected_keywords": [
+      "批准设备",
+      "客户数据",
+      "账号停用"
+    ],
+    "expected_answer_contains": [
+      "客户数据",
+      "账号"
+    ]
+  },
+  {
+    "query_id": "summary-005",
+    "query": "汇总预算表和风险清单中与知识库项目有关的信息。",
+    "category": "summary",
+    "expected_document_keys": [
+      "budget-risk-xlsx"
+    ],
+    "expected_keywords": [
+      "AI 知识库重构",
+      "135000",
+      "R-003",
+      "王璐"
+    ],
+    "expected_answer_contains": [
+      "135,000",
+      "R-003"
+    ]
+  }
+]

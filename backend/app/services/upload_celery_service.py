@@ -51,6 +51,17 @@ STAGE_TASKS = {
 }
 
 
+def queue_for_stage(stage: str, settings: Settings) -> str:
+    """返回阶段对应的队列。
+
+    只有 embedding 使用独立队列；其他阶段继续使用默认队列。
+    """
+
+    if stage == "embed":
+        return settings.celery_embed_queue
+    return settings.celery_task_default_queue
+
+
 def build_upload_task_headers(
     job: UploadProcessingJob,
     upload_task: UploadTask,
@@ -225,10 +236,11 @@ def dispatch_upload_stage_job(
         )
 
     headers = build_upload_task_headers(job, upload_task)
+    queue = queue_for_stage(job.stage, settings)
     with bind_context(**headers):
         async_result = task.apply_async(
             args=[job.id],
-            queue=settings.celery_task_default_queue,
+            queue=queue,
             headers=headers,
         )
     now = datetime.utcnow()
@@ -244,7 +256,7 @@ def dispatch_upload_stage_job(
         event_type="processing_job_celery_stage_dispatched",
         detail={
             "celery_task_id": job.celery_task_id,
-            "queue": settings.celery_task_default_queue,
+            "queue": queue,
             "stage": job.stage,
         },
     )
@@ -254,7 +266,7 @@ def dispatch_upload_stage_job(
     return UploadCeleryDownloadDispatchResult(
         processing_job_id=job.id,
         celery_task_id=job.celery_task_id,
-        queue=settings.celery_task_default_queue,
+        queue=queue,
         status=job.status,
         current_step=job.current_step,
     )

@@ -1,0 +1,65 @@
+{
+  "query_count": 40,
+  "category_counts": {
+    "condition": 5,
+    "cross_format": 4,
+    "factual": 8,
+    "no_answer": 3,
+    "permission": 3,
+    "process": 5,
+    "semantic": 7,
+    "summary": 5
+  },
+  "thresholds": {
+    "recall_at_5": 0.8,
+    "mrr": 0.6,
+    "citation_accuracy": 0.8,
+    "no_answer_false_answer_count": 0
+  },
+  "answerable_query_ids": [
+    "fact-001",
+    "fact-002",
+    "fact-003",
+    "fact-004",
+    "fact-005",
+    "fact-006",
+    "fact-007",
+    "fact-008",
+    "semantic-001",
+    "semantic-002",
+    "semantic-003",
+    "semantic-004",
+    "semantic-005",
+    "semantic-006",
+    "semantic-007",
+    "condition-001",
+    "condition-002",
+    "condition-003",
+    "condition-004",
+    "condition-005",
+    "process-001",
+    "process-002",
+    "process-003",
+    "process-004",
+    "process-005",
+    "cross-001",
+    "cross-002",
+    "cross-003",
+    "cross-004",
+    "summary-001",
+    "summary-002",
+    "summary-003",
+    "summary-004",
+    "summary-005"
+  ],
+  "no_answer_query_ids": [
+    "noanswer-001",
+    "noanswer-002",
+    "noanswer-003"
+  ],
+  "permission_query_ids": [
+    "permission-001",
+    "permission-002",
+    "permission-003"
+  ]
+}

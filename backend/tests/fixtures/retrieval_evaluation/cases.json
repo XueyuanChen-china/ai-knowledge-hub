@@ -1,0 +1,48 @@
+{
+  "version": "v1",
+  "description": "U8 固定检索评测样本。chunk id 由隔离 demo seed 写入后维护，禁止用个人开发库的临时 id 作为正式基线。",
+  "cases": [
+    {
+      "case_id": "factual-procurement-review-threshold",
+      "category": "factual",
+      "query": "采购复核的金额门槛是多少？",
+      "expected_chunk_ids": [101],
+      "notes": "验证精确业务术语和数值条件。"
+    },
+    {
+      "case_id": "conditional-supplier-security-review",
+      "category": "conditional",
+      "query": "什么情况下供应商需要安全评审？",
+      "expected_chunk_ids": [102],
+      "notes": "验证条件型问题的语义召回。"
+    },
+    {
+      "case_id": "process-travel-reimbursement",
+      "category": "process",
+      "query": "员工出差报销应该怎么操作？",
+      "expected_chunk_ids": [103],
+      "notes": "验证流程型同义改写。"
+    },
+    {
+      "case_id": "summary-supplier-risk",
+      "category": "summary",
+      "query": "供应商准入主要有哪些风险？",
+      "expected_chunk_ids": [104, 105],
+      "notes": "验证多证据候选集。"
+    },
+    {
+      "case_id": "no-answer-night-shift-allowance",
+      "category": "no_answer",
+      "query": "公司食堂夜班补贴标准是多少？",
+      "expected_chunk_ids": [],
+      "notes": "验证无答案拒答，不能以采购制度硬答。"
+    },
+    {
+      "case_id": "unauthorized-private-policy",
+      "category": "unauthorized",
+      "query": "受限组织的内部政策是什么？",
+      "expected_chunk_ids": [],
+      "notes": "在组织 A 的评测上下文中，组织 B 证据必须在检索前被过滤。"
+    }
+  ]
+}

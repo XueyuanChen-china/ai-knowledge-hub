@@ -56,9 +56,9 @@ class SemanticSearchApiTests(unittest.TestCase):
         self.test_database.dispose()
 
     def test_semantic_search_returns_enriched_hits(self) -> None:
-        original_search = search_api.search_similar_chunks
+        original_search = search_api.retrieve_hybrid_chunks
         try:
-            search_api.search_similar_chunks = lambda organization_id, knowledge_base_id, query, top_k=5: [
+            search_api.retrieve_hybrid_chunks = lambda **kwargs: [
                 SemanticSearchHit(
                     vector_id="vector_1",
                     chunk_id=21,
@@ -80,7 +80,7 @@ class SemanticSearchApiTests(unittest.TestCase):
                 session=self.session,
             )
         finally:
-            search_api.search_similar_chunks = original_search
+            search_api.retrieve_hybrid_chunks = original_search
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].chunk_id, 21)

@@ -64,6 +64,11 @@ import type {
   KnowledgeBase,
   RetrievedDocPreviewItem,
 } from "@/lib/api/types";
+import {
+  appendAnswerText,
+  appendReferenceText,
+  resolveChatTerminalState,
+} from "@/app/chat/chat-stream-state";
 
 type UiMessage = {
   id: string;
@@ -738,19 +743,18 @@ export default function ChatPage() {
   }
 
   function appendAnswerChunk(answerChunk: string) {
-    streamAnswerTextRef.current += answerChunk;
+    streamAnswerTextRef.current = appendAnswerText(
+      streamAnswerTextRef.current,
+      answerChunk,
+    );
     upsertStreamMessage("assistant", streamAnswerTextRef.current);
   }
 
   function applyReferenceNumbers(referenceNumbers: number[]) {
     streamReferenceNumbersRef.current = referenceNumbers;
-    const referenceText =
-      referenceNumbers.length > 0
-        ? `\n\n引用：${referenceNumbers.map((number) => `[${number}]`).join("")}`
-        : "";
     upsertStreamMessage(
       "assistant",
-      `${streamAnswerTextRef.current}${referenceText}`,
+      appendReferenceText(streamAnswerTextRef.current, referenceNumbers),
     );
   }
 
@@ -828,10 +832,11 @@ export default function ChatPage() {
   }
 
   function handleTerminalEvent(result: ChatRunResponse) {
+    const terminalState = resolveChatTerminalState(result);
     setResponse(result);
     setThreadId(result.thread_id);
     setLiveRunState({
-      status: result.status === "interrupted" ? "interrupted" : "completed",
+      status: terminalState.status,
       currentNode: "",
       nodeTrace: result.node_trace,
       route: result.route,

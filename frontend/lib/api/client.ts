@@ -1,9 +1,6 @@
 import type {
   ChatRunResponse,
-  ChatStreamErrorEvent,
   ChatStreamEventName,
-  ChatStreamNodeEvent,
-  ChatStreamStartEvent,
   AuthMeResponse,
   AuthTokenResponse,
   ChunkRecord,
@@ -24,6 +21,10 @@ import type {
   SecurityAuditLogListResponse,
   SemanticSearchResult,
 } from "@/lib/api/types";
+import {
+  parseSseEventChunk,
+  type ChatStreamEventData,
+} from "@/lib/api/sse";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ??
@@ -119,72 +120,6 @@ async function readErrorDetail(response: Response): Promise<string> {
     // SSE 或纯文本错误体不一定能按 JSON 解析，保留默认状态文案即可。
   }
   return detail;
-}
-
-type ChatStreamEventData =
-  | ChatStreamStartEvent
-  | ChatStreamNodeEvent
-  | string
-  | number[]
-  | ChatRunResponse
-  | ChatStreamErrorEvent;
-
-function parseSseEventChunk(chunk: string): {
-  event: ChatStreamEventName;
-  data: ChatStreamEventData;
-} | null {
-  const lines = chunk
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter(Boolean);
-
-  if (lines.length === 0) {
-    return null;
-  }
-
-  let eventName = "message";
-  const dataLines: string[] = [];
-
-  for (const line of lines) {
-    if (line.startsWith("event:")) {
-      eventName = line.slice("event:".length).trim();
-      continue;
-    }
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice("data:".length).trim());
-    }
-  }
-
-  if (!dataLines.length) {
-    return null;
-  }
-
-  const rawData = dataLines
-    .map((line) => (line.startsWith(" ") ? line.slice(1) : line))
-    .join("\n");
-
-  try {
-    if (eventName === "answer") {
-      return {
-        event: eventName as ChatStreamEventName,
-        data: rawData,
-      };
-    }
-
-    if (eventName === "references") {
-      return {
-        event: eventName as ChatStreamEventName,
-        data: JSON.parse(rawData) as number[],
-      };
-    }
-
-    return {
-      event: eventName as ChatStreamEventName,
-      data: JSON.parse(rawData) as ChatStreamEventData,
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function streamRequest(

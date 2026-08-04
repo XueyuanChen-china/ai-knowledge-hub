@@ -1,224 +1,213 @@
-# Retrieval Quality Improvements
+# U8：混合检索、Rerank 与评测
 
-## 这份文档解决什么问题
+## 目标
 
-当前 RAG 主链路已经能跑通：
+此前系统只有 Dense Vector 检索：它擅长理解“怎么报销差旅费”和“员工差旅申请流程”这类同义表达，但对错误码、制度编号、金额门槛、函数名等精确术语不稳定。
 
-```text
-query
-  -> retrieve
-  -> relevance_check
-  -> answer
-```
-
-但从实际返回结果看，检索质量还有继续优化空间。
-
-典型现象包括：
-
-- top1 / top2 不是最相关 chunk
-- 回答能答对，但依赖模型从 top-k 里自己挑对证据
-- `docs_preview` 里前几条看起来不够“贴题”
-
-所以后续重点已经不是“能不能检索”，而是“检索结果排得够不够准、够不够稳”。
-
----
-
-## 当前待优化项
-
-### 0. 企业级检索链路目标形态
-
-当前第一版主链路仍然偏简单：
+U8 将候选检索升级为：
 
 ```text
-query
-  -> vector retrieve
-  -> relevance_check
-  -> answer
+用户问题
+  -> Dense top-k（语义相近）
+  -> BM25 top-k（关键词/精确术语）
+  -> 相同组织 + 相同知识库过滤
+  -> RRF 融合与 chunk 去重
+  -> BGE reranker 精排
+  -> relevance gate
+  -> 有证据才进入 Answer Node
 ```
 
-后续更完整的企业知识库问答链路建议升级成：
+## 代码职责
+
+| 位置 | 职责 |
+| --- | --- |
+| `backend/app/services/vector_service.py` | 分别执行 Dense 与 BM25 查询，统一 ES 范围过滤并解析命中。 |
+| `backend/app/services/retrieval_service.py` | 调度双路查询、RRF 融合、reranker 降级和检索指标。 |
+| `backend/app/services/retrieval/reranker.py` | 定义最小 reranker 协议，支持本地 BGE CrossEncoder。 |
+| `backend/app/services/rag_service.py` | 将混合检索结果补全为带标题的 `RetrievedDocument`。 |
+| `backend/app/graph/nodes.py` | 使用 rerank score 优先、dense score 兜底的 relevance score。 |
+| `backend/app/services/retrieval_evaluation.py` | 评测固定问题集并生成机器可比较的 JSON 报告。 |
+
+## 为什么使用 RRF
+
+Dense 的 cosine score 与 BM25 分数不在同一量纲，不能直接相加。RRF 只使用名次：
 
 ```text
-1. retrieve
-   - vector top_k
-   - BM25 top_k
-   - metadata filter
-   - permission filter
-
-2. fusion
-   - 合并向量结果和关键词结果
-   - 按 doc_id / chunk_id 去重
-   - 做初步融合排序
-
-3. rerank
-   - cross-encoder / bge-reranker / LLM rerank
-   - 判断 query 和 chunk 是否真的相关
-
-4. relevance gate
-   - top rerank score 是否足够高
-   - 是否有足够证据覆盖问题
-   - 是否命中关键业务实体
-   - 是否允许直接进入 answer
-
-5. answer
-   - 只允许基于通过 gate 的 chunk 生成
-   - 如果证据不足，进入 no_answer / need_review
+RRF(chunk) = sum(1 / (k + rank))
 ```
 
-这个目标形态的核心不是“多召回几个 chunk”，而是把召回、过滤、融合、重排、证据判定拆开。
+同一个 chunk 同时被 Dense 和 BM25 命中时，会累积两次贡献，但只保留一条结果。每条命中会携带：
 
-- `vector retrieve` 负责语义相似，能处理同义表达和口语问题。
-- `BM25 retrieve` 负责字面关键词命中，能减少“语义像但事实不相关”的误召回。
-- `metadata filter` 控制文件类型、文档范围、知识库范围、来源类型。
-- `permission filter` 控制企业权限边界，避免用户看到无权访问的 chunk。
-- `fusion` 把不同召回来源合并，避免只依赖单一路径。
-- `rerank` 判断“这个 chunk 是否真的回答这个 query”。
-- `relevance gate` 决定是否允许生成答案，避免模型基于弱证据硬答。
+```json
+{
+  "retrieval_sources": ["dense", "bm25"],
+  "dense_score": 0.82,
+  "bm25_score": 12.4,
+  "rrf_score": 0.0325,
+  "rerank_score": 0.91
+}
+```
 
-当前项目刚补的“关键词覆盖检查”属于 `relevance gate` 的轻量版。
-它是临时保护，不是最终形态。后续接入 BM25 / rerank 后，关键词覆盖应该降级为 gate 的一个特征，而不是唯一硬规则。
+这让前端、日志和排障可以回答“这条证据为什么被召回”。
 
----
+## 权限边界
 
-### 1. Rerank
-
-目标：
-
-- 先召回一批候选 chunk
-- 再做二次重排
-
-建议链路：
+Dense kNN 与 BM25 查询都复用：
 
 ```text
-query
-  -> dense retrieve top_k=10~20
-  -> rerank
-  -> top_n for answer
+organization_id
+knowledge_base_id
 ```
 
-价值：
+过滤发生在 ES 召回阶段，而不是融合或回答后。因此无权 chunk 不会进入 Dense 候选、BM25 候选、RRF 结果或模型上下文。
 
-- 把真正和问题最相关的 chunk 排到前面
-- 降低“模型自己从 top-k 挑证据”的压力
+## Reranker 与降级
 
-适用场景：
+配置项：
 
-- 多个 chunk 都和主题相关，但只有少数真正回答了问题
-- 文档里有大量背景段、说明段、复盘段混在一起
+```dotenv
+RETRIEVAL_RERANKER_MODEL_NAME=BAAI/bge-reranker-v2-m3
+RETRIEVAL_RERANKER_DEVICE=cpu
+RETRIEVAL_RERANK_SCORE_THRESHOLD=0.78
+```
 
----
+U8 默认每次检索都执行 BGE reranker，因为 relevance gate 统一依赖 `rerank_score`。BGE 首次运行需要下载和加载模型，部署时应提前完成模型预热。它会重排 RRF 前 N 条候选；实现会显式读取 CrossEncoder 原始 logit，再归一化为 `0~1` 的 `rerank_score`，避免模型 SDK 默认 Sigmoid 与业务层重复归一化。
 
-### 2. Query Rewrite
+如果 reranker 加载或调用失败，系统记录 `retrieval.reranker_fallback` 日志并回退到 RRF，保证故障时仍能返回检索结果；但这类请求不应被视为正常的高置信回答，应通过告警和评测发现。
 
-目标：
+## Relevance Gate
 
-- 在检索前先把用户问题改写成更适合召回的查询语句
-
-例子：
-
-原问题：
+门禁只保留三类判断：
 
 ```text
-采购复核的触发条件是什么？
+没有检索结果 -> no_answer / need_review
+rerank_score 低于阈值 -> need_review
+金额、数字、编号、引号内名称没有在证据中出现 -> need_review
 ```
 
-可改写为：
+普通中文关键词不再做硬性覆盖检查，避免“购复”这类字符滑窗噪声和同义表达被误拒。关键实体检查只保护问题中明确出现的金额、数字、编号、英文产品标识或引号内名称。
+
+RRF 分数只保留在 metadata 中用于解释，不作为门禁分数；正常门禁统一使用 BGE `rerank_score`。
+
+## 评测
+
+固定样本在：
 
 ```text
-采购委员会复核 触发条件 单次采购金额 超过二十万元
+backend/tests/fixtures/retrieval_evaluation/cases.json
 ```
 
-价值：
+覆盖：事实型、条件型、流程型、总结型、无答案和越权问题。
 
-- 降低自然语言问法和文档表述不完全一致带来的损失
-- 提高短问题、口语问题、歧义问题的召回稳定性
+在隔离 demo 知识库完成索引后，将 fixture 的 `expected_chunk_ids` 更新为该 demo 数据的稳定 chunk id，再分别运行：
 
----
+```bash
+cd backend
 
-### 3. Metadata Filter
+./.venv/bin/python scripts/evaluate_retrieval.py \
+  --organization-id <组织ID> \
+  --knowledge-base-id <知识库ID> \
+  --mode dense \
+  --output reports/retrieval/dense-baseline.json
 
-目标：
+./.venv/bin/python scripts/evaluate_retrieval.py \
+  --organization-id <组织ID> \
+  --knowledge-base-id <知识库ID> \
+  --mode hybrid \
+  --output reports/retrieval/hybrid.json
+```
 
-- 在检索时结合 metadata 做过滤，而不是所有 chunk 一起混搜
+报告指标：
 
-建议后续考虑的过滤维度：
+- `Recall@K`：有答案问题中，正确 chunk 是否至少出现一次。
+- `MRR`：正确 chunk 排得越靠前，分数越高。
+- `citation_correctness`：候选结果中命中标注证据的比例；当前 Answer Node 的真实引用还需在 U10 E2E 中进一步核验。
+- `no_answer_rejection_rate`：无答案或越权样本没有返回可用候选的比例。
 
-- `document_id`
-- `file_type`
-- `heading_path`
-- `source_type`
-- 权限组 / 可见范围
+## 验证
 
-价值：
+```bash
+cd backend
+./.venv/bin/python -m unittest \
+  tests.test_hybrid_retrieval \
+  tests.test_reranker \
+  tests.test_retrieval_evaluation \
+  tests.test_vector_service \
+  tests.test_rag_service \
+  tests.test_graph_workflow \
+  tests.test_search_permissions
+```
 
-- 减少跨文档误召回
-- 为企业 RAG 的权限控制做准备
-- 让检索范围更可控
+## 本轮边界
 
-典型例子：
+本轮不实现多 reranker provider、在线 A/B、query rewrite、自动调参或通用 plugin registry。query rewrite 只有在固定评测集证明能稳定提升后才考虑开启。
+
+## 公开基准评测
+
+原来的 `cases.json` 主要验证项目业务规则，答案依据绑定到本地数据库的 chunk id，适合回归测试，
+不适合作为公开可比较的检索能力基线。U8 收尾增加一个不提交原始语料的公开基准流程：
 
 ```text
-只在采购制度相关文档中查
-只查 PDF 制度原文
-只查某份文档的 chunk
+公开 corpus + queries + qrels
+        -> 固定裁剪的小样本
+        -> 导入独立测试知识库
+        -> 复用现有 Dense / BM25 / RRF / rerank 链路
+        -> Recall@K / MRR / nDCG@K / top-k precision
 ```
 
----
+第一版默认使用 BEIR SciFact 的 test split。它是英文科学事实检索集，规模适中，带标准 qrels，
+适合验证检索排序工程；它不能代表中文企业制度场景，因此不能替代项目自己的中文企业黄金集。
 
-### 4. Chunk 粒度再调
+准备 100 条 query 和每条 query 的 20 个随机负例：
 
-目标：
+```bash
+cd backend
+./.venv/bin/python scripts/prepare_retrieval_benchmark.py \
+  --dataset scifact \
+  --split test \
+  --query-limit 100 \
+  --negative-per-query 20 \
+  --output-dir data/retrieval_benchmarks/scifact-mini
+```
 
-- 继续优化切片大小和边界
+导入前先在当前组织下创建一个专用测试知识库，并使用有权限的用户执行：
 
-当前要继续观察的问题：
+```bash
+./.venv/bin/python scripts/import_retrieval_benchmark.py \
+  --organization-id <ORG_ID> \
+  --knowledge-base-id <BENCHMARK_KB_ID> \
+  --created-by-user-id <USER_ID> \
+  --dataset BEIR/scifact \
+  --source-dir data/retrieval_benchmarks/scifact-mini
+```
 
-- chunk 是否过大，导致一个 chunk 里混了多个子主题
-- chunk 是否过碎，导致真正答案被拆散
-- overlap 是否足够覆盖上下文
-- 标题前缀是否一直保留得合理
+公开 corpus 已经是 passage 级检索单元，导入脚本不会再次切片。它把稳定的公开 corpus id
+写入 chunk metadata 的 `benchmark_doc_id`，评测时按这个 id 对齐 qrels，不依赖 PostgreSQL
+自增的 `chunk_id`。
 
-后续可调方向：
+分别执行 Dense baseline 和 U8 hybrid：
 
-- `target_chunk_size`
-- `max_chunk_size`
-- overlap 策略
-- table / code / list 的特殊切法
+```bash
+./.venv/bin/python scripts/evaluate_retrieval.py \
+  --organization-id <ORG_ID> \
+  --knowledge-base-id <BENCHMARK_KB_ID> \
+  --mode dense \
+  --cases data/retrieval_benchmarks/scifact-mini/cases.json \
+  --top-k 5 \
+  --output reports/retrieval/scifact-dense.json
 
----
+./.venv/bin/python scripts/evaluate_retrieval.py \
+  --organization-id <ORG_ID> \
+  --knowledge-base-id <BENCHMARK_KB_ID> \
+  --mode hybrid \
+  --cases data/retrieval_benchmarks/scifact-mini/cases.json \
+  --top-k 5 \
+  --output reports/retrieval/scifact-hybrid.json
+```
 
-## 推荐执行顺序
+这里的 `ndcg@K` 使用公开 qrels 的相关性等级；项目原有的 `no_answer` 和 `unauthorized`
+样本仍然单独评测。公开基准通常没有“这个组织无权访问”的语义，因此不能用 SciFact
+证明权限隔离，也不能用它证明企业问答的拒答质量。
 
-我建议按这个顺序做：
-
-1. `rerank`
-2. `query rewrite`
-3. `metadata filter`
-4. `chunk 粒度微调`
-
-原因：
-
-- `rerank` 对现有召回质量的直接提升最大
-- `query rewrite` 能补用户问法和文档表述之间的落差
-- `metadata filter` 更偏控制能力和企业场景
-- `chunk` 微调应该建立在前面几项已有反馈之后再做
-
----
-
-## 验收建议
-
-后面做这些优化时，不建议只靠“肉眼觉得更好”。
-
-建议至少固定几类典型问题样本：
-
-- 事实型问题
-- 条件触发型问题
-- 流程型问题
-- 总结型问题
-
-然后对比：
-
-- top1 是否更准
-- top3 是否更贴题
-- 最终 answer 是否更稳定
-- 引用来源是否更合理
+公开数据只作为本地下载产物，已经加入 `.gitignore`。提交到仓库的应是下载脚本、数据集名称、
+来源 URL、裁剪参数和压缩包 SHA-256，不应直接提交完整公开语料或未经确认的再分发副本。

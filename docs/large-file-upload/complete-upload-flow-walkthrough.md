@@ -234,7 +234,7 @@ auto_index_on_complete = true
 }
 ```
 
-## 五、阶段二：申请分片预签名 URL
+## 五、阶段二：申请分片预签名 URL*（一个分片一个预签名url吗？）*
 
 接口：
 
@@ -314,7 +314,7 @@ Content-Type: text/plain
 
 ETag 是 OSS 对这一个 part 的识别值。客户端必须把它保存下来，后续告诉后端。
 
-注意：ETag 不等同于整文件 SHA256。ETag 用于 OSS Multipart 完成；整文件 SHA256 用于更强的完整性校验。
+注意：ETag 不等同于整文件 SHA256。ETag 用于 OSS Multipart 完成；整文件 SHA256 用于更强的完整性校验。*（这里etag保存在哪里？）*
 
 ## 七、阶段四：确认单个 part
 
@@ -367,7 +367,7 @@ PUT OSS -> 403 SignatureDoesNotMatch
 
 原因是预签名 URL 没有把 `Content-Type` 纳入签名，但脚本 PUT 时发送了 `Content-Type: text/plain`。OSS 计算出的签名和 URL 中的签名不一致，所以拒绝上传。
 
-修复后，预签名和 PUT 使用同一个 MIME 类型，分片成功上传。
+修复后，预签名和 PUT 使用同一个 MIME 类型，分片成功上传。*（这里需要举例说明一下这个情况）*
 
 ### 本次测试遇到的第二个问题
 
@@ -525,7 +525,7 @@ download -> validate -> parse -> split -> embed -> index
 
 ### 1. download
 
-从 OSS 下载原始对象到后端临时目录，并进行流式 SHA256 计算。
+从 OSS 下载原始对象到后端临时目录，并进行流式 SHA256 计算。*（流式 SHA256 计算怎么体现，举例）*
 
 主要检查：
 

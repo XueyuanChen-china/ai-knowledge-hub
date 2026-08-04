@@ -198,6 +198,17 @@ cd backend
 - `差旅报销单常见退回原因有哪些？`
 - `客户成功团队本季度的主要问题是什么？`
 
+## U10 企业化验收
+
+完整验收入口是 [Demo 与 U10 验收](docs/operations/demo-and-acceptance.md)。先运行显式 demo seed，再使用真实 OSS 多格式脚本；不要把 OSS/Qwen 密钥写进脚本或提交到 Git。
+
+```bash
+cd backend
+./.venv/bin/python scripts/seed_demo_environment.py --password 'U10-Demo-Only-Change-Me!'
+```
+
+U10 的测试门禁默认不访问外部服务；需要真实验证时显式设置 `RUN_ENTERPRISE_E2E=1`、`E2E_ACCESS_TOKEN` 和 `E2E_KNOWLEDGE_BASE_ID`。架构、备份恢复和证据记录分别见 [系统架构](docs/architecture/system-overview.md)、[备份与恢复](docs/operations/backup-and-recovery.md) 和 [企业化验收证据](docs/operations/enterprise-readiness-evidence.md)。
+
 ## 当前工程边界
 
 当前版本适合作为实习项目和企业 RAG 工程演示，重点展示数据处理、检索、权限、任务编排、人工审核和可恢复工作流。生产化路线，包括 Alembic、身份权限、持久化 checkpoint、容器化 CI、可观测性和 hybrid retrieval，记录在 [企业化改造路线图](docs/improvements/internship-enterprise-readiness-roadmap.md)。
@@ -212,3 +223,4 @@ cd backend
 - [U1：测试基线学习文档](docs/improvements/enterprise-readiness/u1-testing-baseline.md)
 - [大文件上传专项](docs/large-file-upload/README.md)
 - [MQ 与 Celery 学习资料](docs/message-queue/README.md)
+- [U10 最终 E2E 与证据学习文档](docs/improvements/enterprise-readiness/u10-final-e2e-and-evidence.md)

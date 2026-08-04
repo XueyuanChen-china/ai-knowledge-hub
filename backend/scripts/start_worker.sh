@@ -13,4 +13,5 @@ python -c "from app.db.database import check_database_ready; check_database_read
 
 exec celery -A app.celery_app.celery_app worker \
   --loglevel="${CELERY_LOG_LEVEL:-info}" \
-  --queues="${CELERY_TASK_DEFAULT_QUEUE:-ai_knowledge_hub}"
+  --concurrency="${CELERY_WORKER_CONCURRENCY:-10}" \
+  --queues="${CELERY_WORKER_QUEUES:-${CELERY_TASK_DEFAULT_QUEUE:-ai_knowledge_hub}}"

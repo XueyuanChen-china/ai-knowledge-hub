@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.db.database import get_session
 from app.db.models import KnowledgeBase, KnowledgeItem
 from app.schemas.search import SemanticSearchRequest, SemanticSearchResult
-from app.services.vector_service import search_similar_chunks
+from app.services.retrieval_service import retrieve_hybrid_chunks
 from app.observability.metrics import get_metrics
 from app.security.dependencies import Principal, require_permission
 from app.security.policies import PERMISSION_SEARCH
@@ -71,10 +71,10 @@ def semantic_search(
 
     started_at = time.perf_counter()
     try:
-        hits = search_similar_chunks(
-            principal.organization_id,
-            payload.knowledge_base_id,
-            query_text,
+        hits = retrieve_hybrid_chunks(
+            organization_id=principal.organization_id,
+            knowledge_base_id=payload.knowledge_base_id,
+            query=query_text,
             top_k=payload.top_k,
         )
     except Exception:

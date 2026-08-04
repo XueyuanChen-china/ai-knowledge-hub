@@ -39,32 +39,6 @@ COMPLEX_PATTERNS = (
     r"^(请)?总结这个知识库的重点",
 )
 
-GENERIC_QUERY_TERMS = {
-    "什么",
-    "什么是",
-    "多少",
-    "标准",
-    "条件",
-    "要求",
-    "流程",
-    "规定",
-    "制度",
-    "内容",
-    "问题",
-    "公司",
-    "这个",
-    "那个",
-    "一下",
-    "如何",
-    "怎么",
-    "哪些",
-    "是否",
-    "需要",
-    "可以",
-    "一下子",
-}
-
-
 def router_node(state: GraphState) -> GraphState:
     """Day 16 Router：先尝试 LLM，再用规则兜底。"""
 
@@ -177,8 +151,9 @@ def retrieve_node(
     updated_state["context"] = context
     updated_state["docs_preview"] = build_docs_preview(retrieved_docs)
     updated_state["citations"] = rag_service.build_citations(retrieved_docs)
-    updated_state["relevance_score"] = (
-        max((document.score for document in retrieved_docs), default=0.0)
+    updated_state["relevance_score"] = max(
+        (get_document_relevance_score(document) for document in retrieved_docs),
+        default=0.0,
     )
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [RETRIEVE_NODE])
     return updated_state
@@ -228,19 +203,20 @@ def answer_node(state: GraphState) -> GraphState:
 
 
 def relevance_check_node(state: GraphState) -> GraphState:
-    """Day 19 Relevance Check Node。
+    """检查检索结果能否进入 Answer Node。
 
     职责：
     - 判断 docs 是否为空
-    - 判断 top score 是否过低
+    - 判断 BGE rerank score 是否过低
+    - 检查金额、编号等关键实体是否命中
     - 决定 confident / need_review
     """
 
     retrieved_docs = list(state.get("retrieved_docs") or [])
     hit_count = int(state.get("retrieval_hit_count") or len(retrieved_docs))
     top_score = float(state.get("relevance_score") or 0.0)
-    threshold = get_settings().relevance_low_score_threshold
-    support = evaluate_retrieval_support(
+    threshold = get_settings().retrieval_rerank_score_threshold
+    missing_entities = find_missing_critical_entities(
         str(state.get("question") or ""),
         retrieved_docs,
     )
@@ -255,20 +231,15 @@ def relevance_check_node(state: GraphState) -> GraphState:
         updated_state["need_human_review"] = True
         updated_state["relevance_decision"] = "need_review"
         updated_state["review_reason"] = (
-            f"top score {top_score:.4f} below threshold {threshold:.2f}"
+            f"rerank score {top_score:.4f} below threshold {threshold:.2f}"
         )
-    elif not support["is_supported"]:
+    elif missing_entities:
         updated_state["need_human_review"] = True
         updated_state["relevance_decision"] = "need_review"
-        if support["matched_terms"]:
-            updated_state["review_reason"] = (
-                "retrieved docs only weakly match key query terms: "
-                + ", ".join(support["matched_terms"][:3])
-            )
-        else:
-            updated_state["review_reason"] = (
-                "retrieved docs do not cover key query terms"
-            )
+        updated_state["review_reason"] = (
+            "retrieved docs do not cover critical query entities: "
+            + ", ".join(missing_entities[:3])
+        )
     else:
         updated_state["need_human_review"] = False
         updated_state["relevance_decision"] = "confident"
@@ -369,51 +340,72 @@ def route_question(question: str, knowledge_base_id: Optional[int]) -> tuple[str
     return (RAG_ROUTE, "knowledge base search required")
 
 
-def evaluate_retrieval_support(
+def find_missing_critical_entities(
     question: str,
     retrieved_docs: list[rag_service.RetrievedDocument],
-) -> dict[str, object]:
-    """检查检索结果是否真的覆盖了问题里的关键语义词。"""
+) -> list[str]:
+    """找出问题中出现、但候选证据没有覆盖的关键实体。
 
-    significant_terms = extract_significant_query_terms(question)
-    if not significant_terms:
-        return {
-            "is_supported": True,
-            "matched_terms": [],
-        }
+    普通中文词不参与硬门禁，避免同义表达被误拒。当前只保护数字/金额、编号、
+    英文产品标识和用户明确加引号的名称；后续可以接入组织级实体词典。
+    """
 
-    matched_terms: list[str] = []
-    for document in retrieved_docs[:3]:
-        support_text = build_document_support_text(document)
-        for term in significant_terms:
-            if term in support_text and term not in matched_terms:
-                matched_terms.append(term)
+    entities = extract_critical_query_entities(question)
+    if not entities:
+        return []
 
-    has_long_match = any(len(term) >= 3 for term in matched_terms)
-    short_match_count = sum(1 for term in matched_terms if len(term) == 2)
-    is_supported = has_long_match or short_match_count >= 2
-
-    return {
-        "is_supported": is_supported,
-        "matched_terms": matched_terms,
-    }
+    support_text = normalize_match_text(
+        "\n".join(build_document_support_text(document) for document in retrieved_docs[:3])
+    )
+    return [entity for entity in entities if entity not in support_text]
 
 
-def extract_significant_query_terms(question: str) -> list[str]:
-    """从问题里抽取更适合做支持性判断的关键词。"""
+def extract_critical_query_entities(question: str) -> list[str]:
+    """提取需要精确核对的数字、编号和引号内名称。"""
 
-    unique_terms: list[str] = []
-    for raw_term in rag_service.extract_query_terms(question):
-        term = normalize_match_text(raw_term)
-        if len(term) < 2 or term in GENERIC_QUERY_TERMS:
-            continue
-        if term not in unique_terms:
-            unique_terms.append(term)
+    normalized_question = normalize_match_text(question)
+    candidates: list[str] = []
+    candidates.extend(
+        re.findall(
+            r"(?<![a-z0-9])(?:[a-z]+[-_]?[a-z0-9]*\d[a-z0-9_-]*)(?![a-z0-9])",
+            normalized_question,
+        )
+    )
+    candidates.extend(
+        re.findall(
+            r"(?<![a-z0-9_-])(?:\d+(?:\.\d+)?|[零一二三四五六七八九十百千万亿两]+)"
+            r"(?:亿|千万|百万|万|千|百)?(?:元|万元|块|%|天|个月|人|条|次)?",
+            normalized_question,
+        )
+    )
+    candidates.extend(
+        value.lower()
+        for value in re.findall(r"[\"“‘「【]([^\"”’」】]+)[\"”’」】]", question)
+    )
 
-    unique_terms.sort(key=len, reverse=True)
-    long_terms = [term for term in unique_terms if len(term) >= 3][:8]
-    short_terms = [term for term in unique_terms if len(term) == 2][:8]
-    return long_terms + short_terms
+    unique_entities: list[str] = []
+    for entity in candidates:
+        normalized_entity = normalize_match_text(entity)
+        if normalized_entity and normalized_entity not in unique_entities:
+            unique_entities.append(normalized_entity)
+    return unique_entities
+
+
+def get_document_relevance_score(document: rag_service.RetrievedDocument) -> float:
+    """返回 relevance gate 使用的可比较分数。
+
+    RRF 的分数通常只有 0.01 左右，不能作为门禁分数。正常检索结果应携带
+    已归一化的 rerank score；保留 document.score 兜底，方便单元测试和旧数据兼容。
+    """
+
+    metadata = document.metadata or {}
+    value = metadata.get("rerank_score")
+    if value is not None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+    return document.score
 
 
 def build_document_support_text(document: rag_service.RetrievedDocument) -> str:

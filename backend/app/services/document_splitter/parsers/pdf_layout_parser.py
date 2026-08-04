@@ -10,6 +10,7 @@ from app.services.document_splitter.parsers.plain_text_parser import match_headi
 HEADER_ZONE_RATIO = 0.12
 FOOTER_ZONE_RATIO = 0.88
 LINE_MERGE_Y_TOLERANCE = 4.0
+RAW_LINE_CLUSTER_GAP = 18.0
 PARAGRAPH_GAP_RATIO = 1.65
 PDF_SHORT_NOISE_LENGTH = 24
 
@@ -438,7 +439,9 @@ def detect_page_column_mode(words: list[dict[str, object]], page_width: float) -
     if (
         left_only_count >= 3
         and right_only_count >= 3
-        and spanning_count <= max(left_only_count, right_only_count) * 0.35
+        # 少量横跨中线的标题、表格行或页眉是允许的，但比例过高时
+        # 更可能是单栏正文，不应被误判为双栏。
+        and spanning_count <= max(left_only_count, right_only_count) * 0.20
     ):
         return "two_column"
     return "single_column"
@@ -552,39 +555,69 @@ def find_central_low_occupancy_band(
 
 
 def build_raw_line_spans(words: list[dict[str, object]]) -> list[tuple[float, float]]:
-    """先不分栏，按 y 坐标把词粗聚合成原始行。"""
+    """先不分栏，按 y 坐标把词粗聚合成原始行中的连续文字簇。
+
+    双栏 PDF 中，左右栏经常处在相同 y 坐标。如果直接取整行的最小
+    x0 和最大 x1，会把左右栏伪造成一条横跨页面的长行，occupancy
+    也就无法发现中间 gutter。因此这里保留同一 y 行上的左右连续簇：
+    普通单栏句子仍是一簇，双栏则会得到左、右两簇。
+    """
 
     if not words:
         return []
 
     sorted_words = sorted(words, key=lambda word: (float(word["top"]), float(word["x0"])))
     spans: list[tuple[float, float]] = []
-    current_words: list[dict[str, object]] = []
+    current_row_words: list[dict[str, object]] = []
     current_top: Optional[float] = None
+
+    def flush_row(words_in_row: list[dict[str, object]]) -> None:
+        if not words_in_row:
+            return
+
+        current_cluster: list[dict[str, object]] = []
+        previous_x1: Optional[float] = None
+        for word in sorted(words_in_row, key=lambda item: float(item["x0"])):
+            x0 = float(word["x0"])
+            if (
+                current_cluster
+                and previous_x1 is not None
+                and x0 - previous_x1 > RAW_LINE_CLUSTER_GAP
+            ):
+                spans.append(
+                    (
+                        min(float(item["x0"]) for item in current_cluster),
+                        max(float(item["x1"]) for item in current_cluster),
+                    )
+                )
+                current_cluster = []
+            current_cluster.append(word)
+            previous_x1 = float(word["x1"])
+
+        if current_cluster:
+            spans.append(
+                (
+                    min(float(item["x0"]) for item in current_cluster),
+                    max(float(item["x1"]) for item in current_cluster),
+                )
+            )
 
     for word in sorted_words:
         word_top = float(word["top"])
-        if current_words and current_top is not None and abs(word_top - current_top) > LINE_MERGE_Y_TOLERANCE:
-            spans.append(
-                (
-                    min(float(item["x0"]) for item in current_words),
-                    max(float(item["x1"]) for item in current_words),
-                )
-            )
-            current_words = []
+        if (
+            current_row_words
+            and current_top is not None
+            and abs(word_top - current_top) > LINE_MERGE_Y_TOLERANCE
+        ):
+            flush_row(current_row_words)
+            current_row_words = []
             current_top = None
 
-        current_words.append(word)
+        current_row_words.append(word)
         if current_top is None:
             current_top = word_top
 
-    if current_words:
-        spans.append(
-            (
-                min(float(item["x0"]) for item in current_words),
-                max(float(item["x1"]) for item in current_words),
-            )
-        )
+    flush_row(current_row_words)
 
     return spans
 

@@ -1,0 +1,105 @@
+{
+  "documents": {
+    "travel-reimbursement-txt": {
+      "expected_parser": "plain_text_parser",
+      "expected_element_count": 19,
+      "expected_section_count": 7,
+      "expected_block_count": 19,
+      "expected_heading_count": 6,
+      "expected_table_count": 0,
+      "expected_list_count": 0,
+      "required_block_types": [
+        "paragraph"
+      ],
+      "required_heading_paths": [
+        "差旅与费用报销管理办法",
+        "第二章 出差申请与预算审批",
+        "第四章 报销材料与提交时限"
+      ]
+    },
+    "supplier-admission-md": {
+      "expected_parser": "markdown_parser",
+      "expected_element_count": 29,
+      "expected_section_count": 8,
+      "expected_block_count": 29,
+      "expected_heading_count": 14,
+      "expected_table_count": 1,
+      "expected_list_count": 3,
+      "expected_code_count": 1,
+      "required_block_types": [
+        "paragraph",
+        "list",
+        "table",
+        "code"
+      ],
+      "required_heading_paths": [
+        "供应商准入与持续评估规范",
+        "2. 标准准入流程",
+        "2.1 客户数据处理的强制条件"
+      ]
+    },
+    "security-response-pdf": {
+      "expected_parser": "pdf_layout_parser",
+      "expected_page_count": 4,
+      "expected_table_count": 1,
+      "expected_element_count": 35,
+      "expected_section_count": 15,
+      "expected_block_count": 35,
+      "expected_heading_count": 15,
+      "expected_list_count": 0,
+      "required_block_types": [
+        "heading",
+        "paragraph",
+        "table"
+      ],
+      "required_heading_paths": [
+        "2. P1 首要时限",
+        "7. 分级与响应矩阵",
+        "9. 恢复与关闭"
+      ]
+    },
+    "employee-handbook-docx": {
+      "expected_parser": "docx_parser",
+      "expected_page_count": 5,
+      "expected_table_count": 2,
+      "expected_element_count": 30,
+      "expected_section_count": 15,
+      "expected_block_count": 30,
+      "expected_heading_count": 15,
+      "expected_list_count": 6,
+      "required_block_types": [
+        "paragraph",
+        "list",
+        "table"
+      ],
+      "required_heading_paths": [
+        "第二章 请假与远程办公",
+        "第三章 信息安全",
+        "第四章 入职、转岗与离职"
+      ]
+    },
+    "budget-risk-xlsx": {
+      "expected_parser": "excel_parser",
+      "expected_sheet_count": 3,
+      "expected_table_count": 4,
+      "expected_element_count": 4,
+      "expected_section_count": 3,
+      "expected_block_count": 4,
+      "expected_heading_count": 0,
+      "expected_list_count": 0,
+      "expected_sheet_names": [
+        "预算总表",
+        "风险清单",
+        "供应商评分"
+      ],
+      "required_block_types": [
+        "table"
+      ],
+      "required_heading_paths": [
+        "预算总表",
+        "风险清单",
+        "供应商评分"
+      ]
+    }
+  }
+}

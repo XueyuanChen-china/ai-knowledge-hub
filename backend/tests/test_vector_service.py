@@ -71,11 +71,12 @@ class FakeElasticsearchClient:
         self.last_delete_ids = self.last_delete_ids or []
         self.last_delete_ids.append({"index": index, "id": id, "refresh": refresh})
 
-    def search(self, index, size, knn):
+    def search(self, index, size, knn=None, query=None):
         self.last_search = {
             "index": index,
             "size": size,
             "knn": knn,
+            "query": query,
         }
         return self.search_response
 
@@ -280,6 +281,53 @@ class VectorServiceTests(unittest.TestCase):
         self.assertEqual(fake_client.last_search["knn"]["query_vector"][0], 4.0)
         self.assertEqual(
             fake_client.last_search["knn"]["filter"],
+            [
+                {"term": {"organization_id": 7}},
+                {"term": {"knowledge_base_id": 1}},
+            ],
+        )
+
+    def test_search_bm25_chunks_uses_the_same_organization_and_knowledge_base_filters(self) -> None:
+        fake_client = FakeElasticsearchClient()
+        fake_client.indices.exists_result = True
+        fake_client.search_response = {
+            "hits": {
+                "hits": [
+                    {
+                        "_id": "vector_2",
+                        "_score": 8.2,
+                        "_source": {
+                            "vector_id": "vector_2",
+                            "chunk_id": 12,
+                            "document_id": 2,
+                            "knowledge_item_id": 3,
+                            "content": "采购复核触发条件是金额超过二十万元。",
+                            "metadata": {},
+                        },
+                    }
+                ]
+            }
+        }
+
+        original_get_client = vector_service.get_elasticsearch_client
+        original_get_settings = vector_service.get_settings
+        try:
+            vector_service.get_elasticsearch_client = lambda: fake_client
+            vector_service.get_settings = lambda: self.build_settings()
+            hits = vector_service.search_bm25_chunks(
+                organization_id=7,
+                knowledge_base_id=1,
+                query="采购复核",
+                top_k=3,
+            )
+        finally:
+            vector_service.get_elasticsearch_client = original_get_client
+            vector_service.get_settings = original_get_settings
+
+        self.assertEqual(hits[0].retrieval_sources, ("bm25",))
+        self.assertEqual(hits[0].bm25_score, 8.2)
+        self.assertEqual(
+            fake_client.last_search["query"]["bool"]["filter"],
             [
                 {"term": {"organization_id": 7}},
                 {"term": {"knowledge_base_id": 1}},

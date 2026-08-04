@@ -33,6 +33,16 @@ def create_celery_app() -> Celery:
             "x-dead-letter-routing-key": settings.celery_dead_letter_routing_key,
         },
     )
+    embed_queue = Queue(
+        settings.celery_embed_queue,
+        exchange=task_exchange,
+        routing_key=settings.celery_embed_queue,
+        durable=True,
+        queue_arguments={
+            "x-dead-letter-exchange": settings.celery_dead_letter_exchange,
+            "x-dead-letter-routing-key": settings.celery_dead_letter_routing_key,
+        },
+    )
     dead_letter_queue = Queue(
         settings.celery_dead_letter_queue,
         exchange=dead_letter_exchange,
@@ -50,7 +60,13 @@ def create_celery_app() -> Celery:
         task_default_exchange=settings.celery_task_default_queue,
         task_default_exchange_type="direct",
         task_default_routing_key=settings.celery_task_default_queue,
-        task_queues=(task_queue, dead_letter_queue),
+        task_queues=(task_queue, embed_queue, dead_letter_queue),
+        task_routes={
+            "uploads.embed": {
+                "queue": settings.celery_embed_queue,
+                "routing_key": settings.celery_embed_queue,
+            },
+        },
         broker_transport_options={
             "confirm_publish": settings.celery_publisher_confirm,
         },
