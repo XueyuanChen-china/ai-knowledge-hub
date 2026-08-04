@@ -21,3 +21,4 @@ frontend/test-results/
 frontend/playwright-report/
 backend/tmp/
 backend/scripts/node_modules/
+backend/scripts/node_modules
