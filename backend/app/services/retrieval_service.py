@@ -24,8 +24,13 @@ def retrieve_hybrid_chunks(
     knowledge_base_id: int,
     query: str,
     top_k: int = 5,
+    query_variants: Optional[list[str]] = None,
 ) -> list[SemanticSearchHit]:
-    """执行 Dense + BM25 + RRF + BGE rerank 的检索主流程。"""
+    """执行 Dense + BM25 + RRF + BGE rerank 的检索主流程。
+
+    query_variants 用于 Query Rewrite：原始 query 始终参与检索，补充 query
+    只增加召回范围，最终仍由同一个 reranker 依据原始问题精排。
+    """
 
     normalized_query = query.strip()
     if not normalized_query:
@@ -34,18 +39,31 @@ def retrieve_hybrid_chunks(
     settings = get_settings()
     started_at = time.perf_counter()
     try:
-        dense_hits = search_similar_chunks(
-            organization_id,
-            knowledge_base_id,
-            normalized_query,
-            top_k=max(top_k, settings.retrieval_dense_candidate_k),
-        )
-        bm25_hits = search_bm25_chunks(
-            organization_id,
-            knowledge_base_id,
-            normalized_query,
-            top_k=max(top_k, settings.retrieval_bm25_candidate_k),
-        )
+        queries = [normalized_query]
+        for variant in query_variants or []:
+            normalized_variant = str(variant or "").strip()
+            if normalized_variant and normalized_variant not in queries:
+                queries.append(normalized_variant)
+
+        dense_hits: list[SemanticSearchHit] = []
+        bm25_hits: list[SemanticSearchHit] = []
+        for retrieval_query in queries:
+            dense_hits.extend(
+                search_similar_chunks(
+                    organization_id,
+                    knowledge_base_id,
+                    retrieval_query,
+                    top_k=max(top_k, settings.retrieval_dense_candidate_k),
+                )
+            )
+            bm25_hits.extend(
+                search_bm25_chunks(
+                    organization_id,
+                    knowledge_base_id,
+                    retrieval_query,
+                    top_k=max(top_k, settings.retrieval_bm25_candidate_k),
+                )
+            )
         fused_hits = reciprocal_rank_fusion(
             dense_hits,
             bm25_hits,

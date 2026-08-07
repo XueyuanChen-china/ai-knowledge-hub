@@ -304,6 +304,12 @@ class Conversation(SQLModel, table=True):
     # 是否在会话列表置顶。
     is_pinned: bool = Field(default=False, index=True)
 
+    # 历史消息过长时保存的摘要。完整 messages 仍然保留在 messages 表中。
+    context_summary: str = ""
+    context_summary_version: int = Field(default=0)
+    context_summary_through_message_id: Optional[int] = Field(default=None, index=True)
+    context_summary_updated_at: Optional[datetime] = Field(default=None)
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -330,6 +336,36 @@ class Message(SQLModel, table=True):
     metadata_json: str = ""
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConversationMemory(SQLModel, table=True):
+    """会话级长期记忆。
+
+    这里只保存用户明确要求记住的少量事实、决定、偏好或约束。
+    它是 messages 的派生数据，不替代完整消息历史。
+    """
+
+    __tablename__ = "conversation_memories"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    conversation_id: int = Field(foreign_key="conversations.id", index=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+
+    # fact / decision / preference / constraint。
+    memory_type: str = Field(default="fact", index=True, max_length=50)
+    content: str
+    source_message_id: Optional[int] = Field(
+        default=None,
+        foreign_key="messages.id",
+        index=True,
+    )
+    importance: float = Field(default=1.0, index=True)
+    status: str = Field(default="active", index=True, max_length=30)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ReviewTask(SQLModel, table=True):

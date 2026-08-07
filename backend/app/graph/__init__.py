@@ -5,6 +5,7 @@ from app.graph.nodes import (
     COMPLEX_ROUTE,
     DIRECT_ROUTE,
     RAG_ROUTE,
+    TOOL_ROUTE,
     RELEVANCE_CHECK_NODE,
 )
 from app.graph.state import GraphState
@@ -17,6 +18,7 @@ __all__ = [
     "DIRECT_ROUTE",
     "GraphState",
     "RAG_ROUTE",
+    "TOOL_ROUTE",
     "RELEVANCE_CHECK_NODE",
     "build_basic_workflow",
 ]

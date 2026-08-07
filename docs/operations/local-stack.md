@@ -1,6 +1,6 @@
 # 本地容器栈
 
-本项目通过根目录的 `compose.yml` 启动一套生产近似的本地环境：PostgreSQL、Elasticsearch、RabbitMQ、Redis、FastAPI、Celery Worker 和 React 静态前端。
+本项目通过根目录的 `compose.yml` 启动一套生产近似的本地环境：PostgreSQL、Elasticsearch、RabbitMQ、Redis、FastAPI、普通 Celery Worker、低并发 embedding Worker 和 React 静态前端。
 
 ## 前置条件
 
@@ -48,11 +48,11 @@ PostgreSQL / Elasticsearch / RabbitMQ / Redis healthy
   -> alembic upgrade head
   -> setup LangGraph checkpoint 表
   -> Uvicorn 启动并通过 /health
-  -> Celery Worker 检查已迁移 schema 后开始消费
+  -> 普通 Worker 和 embedding Worker 检查已迁移 schema 后开始消费各自队列
   -> frontend 静态站点启动
 ```
 
-其中只有 `backend` 执行 Alembic。`worker` 绝不执行 migration，只检查 schema revision，避免将来扩容 Worker 时出现并发改表。
+其中只有 `backend` 执行 Alembic。`worker` 和 `embedding-worker` 绝不执行 migration，只检查 schema revision，避免将来扩容 Worker 时出现并发改表。embedding Worker 默认并发为 1，用于控制 BGE-M3 的内存占用。
 
 ## 日常操作
 
@@ -91,6 +91,8 @@ docker compose ps
 docker compose logs --tail=200 backend
 docker compose logs --tail=200 worker
 curl http://localhost:8000/health
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
 curl http://localhost:9200/_cluster/health?pretty
 ```
 

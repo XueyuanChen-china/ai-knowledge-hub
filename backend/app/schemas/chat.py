@@ -47,6 +47,14 @@ class ChatRunResponse(SQLModel):
     relevance_decision: str = ""
     retrieval_hit_count: int = 0
     answer_used_fallback: Optional[bool] = None
+    tool_used: bool = False
+    tool_results: list[dict[str, Any]] = []
+    tool_error: str = ""
+    tool_call_count: int = 0
+    tool_planner_mode: str = ""
+    context_gap: dict[str, Any] = {}
+    history_recovery_used: bool = False
+    relevant_history: list[dict[str, Any]] = []
     node_trace: list[str] = []
 
 

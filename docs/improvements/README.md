@@ -13,6 +13,11 @@
 
 - [Router Upgrade Roadmap](./router-upgrade-roadmap.md)
 - [Retrieval Quality Improvements](./retrieval-quality-improvements.md)
+- [Agent 能力增强路线图](./agent-capability-upgrade-roadmap.md)
+- [Phase 1：查询改写与初步上下文隔离](./phase-1-query-rewrite-and-context-isolation.md)
+- [Phase 2：Context Management](./phase-2-context-management.md)
+- [Phase 3：只读 Tool Calling](./phase-3-readonly-tool-calling.md)
+- [Phase 4：Tool Calling 安全、评估与授权](../operations/tool-calling-security.md)
 - [Knowledge Base Deletion Safeguards](./knowledge-base-deletion-safeguards.md)
 - [Large File Upload Roadmap](./large-file-upload-roadmap.md)
 - [LLM API Reliability Roadmap](./llm-api-reliability-roadmap.md)

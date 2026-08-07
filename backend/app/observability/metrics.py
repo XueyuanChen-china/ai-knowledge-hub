@@ -68,6 +68,28 @@ class MetricsRegistry:
     def record_celery_task(self, stage: str, status: str) -> None:
         self.increment("ai_knowledge_hub_celery_tasks_total", {"stage": stage, "status": status})
 
+    def record_context_pack(self, purpose: str, *, truncated: bool, omitted_count: int) -> None:
+        """记录低基数上下文质量指标，不记录问题正文。"""
+
+        self.increment(
+            "ai_knowledge_hub_context_packs_total",
+            {"purpose": purpose, "truncated": str(bool(truncated)).lower()},
+        )
+        if omitted_count > 0:
+            self.increment(
+                "ai_knowledge_hub_context_omitted_items_total",
+                {"purpose": purpose},
+                value=omitted_count,
+            )
+
+    def record_context_recovery(self, outcome: str) -> None:
+        """记录历史恢复结果，标签只使用固定状态。"""
+
+        self.increment(
+            "ai_knowledge_hub_context_recovery_total",
+            {"outcome": outcome},
+        )
+
     def render_prometheus(self) -> str:
         with self._lock:
             counters = list(self._counters.items())

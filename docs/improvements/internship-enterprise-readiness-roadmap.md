@@ -133,17 +133,21 @@ execution: code
 
 “达到 80%”是本路线图用于控制范围的内部刻度，不是可以对外声称的行业认证。面试和项目展示只使用下面这些可检查的工程证据：
 
-| Enterprise signal | Current evidence                   | Gap               | Required proof                         |
-| ----------------- | ---------------------------------- | ----------------- | -------------------------------------- |
-| 完整业务闭环      | 上传、索引、检索、RAG、HITL 已跑通 | 缺少统一 E2E      | 干净环境 happy path                    |
-| 可控数据演进      | PostgreSQL + SQLModel              | 运行时补列        | Alembic 空库、存量库和回滚验证         |
-| 安全知识边界      | ES 已有部分 metadata 字段          | 无身份和授权      | RBAC 与 SQL/ES/OSS/Chat 越权测试       |
-| 可恢复工作流      | conversation/message 已持久化      | checkpoint 在内存 | interrupt/restart/resume               |
-| 可重复交付        | 有独立依赖 compose                 | 无统一镜像和 CI   | 根 Compose、镜像、CI 门禁              |
-| 可诊断运行        | 上传任务有状态和重试               | 缺少统一关联日志  | request/task/job 关联和 health/metrics |
-| 可量化 RAG        | splitter 有回归快照                | 检索质量靠观察    | hybrid/rerank 离线评估报告             |
-| 可维护前端        | 核心页面已经可用                   | 无自动化测试      | 关键 unit/E2E、鉴权和错误状态          |
-| 可快速评审        | 有大量学习文档                     | 顶层表达分散      | README、架构图、演示脚本和证据页       |
+| Enterprise signal | Current evidence                                      | Remaining proof                         |
+| ----------------- | ----------------------------------------------------- | ---------------------------------------- |
+| 完整业务闭环      | 上传、索引、检索、RAG、HITL 和 Tool Calling 已实现    | 一次干净环境真实 E2E                    |
+| 可控数据演进      | PostgreSQL + SQLModel + Alembic                       | 继续按迁移流程发布                      |
+| 安全知识边界      | JWT/RBAC、组织过滤、PostgreSQL/ES/OSS/Chat 授权       | 真实环境补一组负向演示                  |
+| 可恢复工作流      | PostgreSQL LangGraph checkpoint                       | 真实重启后 resume 演示                  |
+| 可重复交付        | 根 Compose、镜像、CI                                  | 新机器人工启动记录                      |
+| 可诊断运行        | 关联日志、metrics、health、阶段 job 和 runbook        | 记录一次失败任务排障过程                |
+| 可量化 RAG        | BM25 + dense + RRF + rerank + 固定评估集               | 持续补充真实数据集指标                  |
+| 可维护前端        | React/Vite、鉴权、SSE、Vitest、lint 和 production build | Playwright 浏览器 happy path            |
+| 可快速评审        | README、架构图、验收手册、最终交付清单和证据页        | 填写本次真实演示结果                    |
+
+### Current closeout status
+
+U1 至 U9 的实现和自动化验证已经完成，U10 的脚本、文档和证据结构已经完成。当前最后的交付动作是一次带真实 OSS/Qwen 的受控演示，并把结果写入证据页；这不是继续扩展功能，而是验证外部依赖和整理交付记录。
 
 全部 U1 至 U10 完成、Verification Contract 全部通过，并满足 Definition of Done 后，内部可认为达到了本计划定义的 80% 至 82%“实习企业项目标准”。对外应表述为“完成企业化工程闭环并提供验证证据”，不能表述为“达到真实生产系统 80%”。
 

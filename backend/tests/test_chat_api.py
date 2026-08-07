@@ -126,7 +126,7 @@ class ChatApiTests(unittest.TestCase):
             ]
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="采购复核的触发条件是单次采购金额超过二十万元。\n\n参考来源：[1]",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),
@@ -231,7 +231,7 @@ class ChatApiTests(unittest.TestCase):
             ]
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="采购复核的触发条件是单次采购金额超过二十万元。\n\n参考来源：[1]",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),

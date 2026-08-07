@@ -146,6 +146,38 @@ class Settings(BaseSettings):
     # Answer Node 请求超时时间，单位秒。
     llm_answer_timeout_seconds: int = 40
 
+    # Context Management：不同 LLM 节点使用独立的上下文预算。
+    # 这里是估算 Token，不替代具体模型 tokenizer；目的是先防止上下文无限增长。
+    context_router_max_tokens: int = 800
+    context_rewrite_max_tokens: int = 1600
+    context_answer_max_tokens: int = 6000
+    context_message_max_chars: int = 1200
+    context_rewrite_recent_messages: int = 6
+    context_answer_recent_messages: int = 6
+    context_router_summary_max_tokens: int = 120
+    context_rewrite_summary_max_tokens: int = 250
+    context_answer_summary_max_tokens: int = 500
+    context_answer_retrieval_max_tokens: int = 4000
+    context_answer_tool_max_tokens: int = 1000
+    context_router_history_max_tokens: int = 0
+    context_rewrite_history_max_tokens: int = 400
+    context_answer_history_max_tokens: int = 1000
+    context_router_memory_max_tokens: int = 0
+    context_rewrite_memory_max_tokens: int = 300
+    context_answer_memory_max_tokens: int = 800
+    context_system_max_tokens: int = 180
+    context_pinned_max_tokens: int = 240
+    context_summary_trigger_chars: int = 12000
+    context_summary_min_new_chars: int = 3000
+    context_summary_max_tokens: int = 500
+    context_summary_keep_recent_messages: int = 6
+
+    # 只读 Agent 工具的资源和结果边界。工具结果仍会经过 Context Manager 再进入 LLM。
+    agent_tool_max_document_chars: int = 24000
+    agent_tool_max_list_documents: int = 50
+    agent_tool_max_neighbor_radius: int = 3
+    agent_tool_max_calls_per_turn: int = 1
+
     # 对象存储提供方。Phase 1 先固定支持阿里云 OSS。
     storage_provider: str = "aliyun-oss"
 

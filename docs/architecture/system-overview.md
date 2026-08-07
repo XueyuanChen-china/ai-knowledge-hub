@@ -23,6 +23,11 @@ flowchart LR
     GRAPH --> RET
     GRAPH --> QWEN["Qwen"]
     GRAPH --> CP["PostgreSQL checkpoint"]
+    GRAPH --> CTX["Context Manager"]
+    GRAPH --> TOOLS["Readonly Tool Registry"]
+    TOOLS --> PG
+    TOOLS --> ES
+    API --> SSE["SSE + citations"]
 ```
 
 ## 数据职责
@@ -50,6 +55,17 @@ OSS complete
 
 每个阶段在 PostgreSQL 中保留 job 状态，失败可以重试；同一文件的阶段仍然按依赖顺序执行，不同文件可以处于不同阶段形成流水线。
 
+阶段任务不是把同一个文件的步骤并行乱跑，而是让多个文件形成流水线：
+
+```text
+文件 A：index
+文件 B：embed
+文件 C：parse
+文件 D：download
+```
+
+Embedding 使用独立队列和较低并发，避免 BGE-M3 模型同时加载过多副本；普通处理任务和 embedding 任务可以分别扩容。
+
 ## 检索与回答
 
 ```text
@@ -63,6 +79,32 @@ OSS complete
 ```
 
 权限过滤在 PostgreSQL 资源查询和 Elasticsearch 检索内部都执行，前端隐藏按钮不构成安全边界。
+
+## Router、上下文和工具调用
+
+普通知识问题和需要读取上一轮引用的问题走不同路线：
+
+```text
+普通问题
+  -> Router: rag
+  -> Query Rewrite（满足规则时）
+  -> Dense + BM25 + RRF + rerank
+  -> relevance gate
+  -> Context Manager
+  -> Answer
+
+“展开刚才命中的文档”
+  -> Router: tool
+  -> 读取上一轮 citations
+  -> 跳过重复检索
+  -> Qwen native tool_call
+  -> 后端白名单、权限和参数校验
+  -> 查询 PostgreSQL / Elasticsearch
+  -> Context Manager
+  -> Answer
+```
+
+Qwen 只返回工具名称和参数，不直接访问数据库。工具执行结果必须经过权限边界和上下文预算控制，最终回答只能使用当前 Context Pack 中的证据。
 
 ## 明确边界
 

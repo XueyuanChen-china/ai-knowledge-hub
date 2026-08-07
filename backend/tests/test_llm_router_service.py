@@ -14,6 +14,7 @@ class LlmRouterServiceTests(unittest.TestCase):
         self.assertEqual(llm_router_service.normalize_route(" direct "), "direct")
         self.assertEqual(llm_router_service.normalize_route("RAG"), "rag")
         self.assertEqual(llm_router_service.normalize_route("Complex"), "complex")
+        self.assertEqual(llm_router_service.normalize_route("tool"), "tool")
         self.assertIsNone(llm_router_service.normalize_route("unknown"))
 
     def test_parse_router_output_from_json(self) -> None:
@@ -43,6 +44,19 @@ class LlmRouterServiceTests(unittest.TestCase):
         self.assertIn("公司制度怎么报销", messages[1]["content"])
         self.assertIn("JSON", messages[0]["content"])
 
+    def test_build_router_messages_includes_previous_citations(self) -> None:
+        messages = llm_router_service.build_router_messages(
+            "展开刚才命中的文档",
+            knowledge_base_id=7,
+            conversation_context={
+                "previous_citations": [
+                    {"doc_id": 8, "chunk_id": 51, "title": "供应商制度"}
+                ]
+            },
+        )
+        self.assertIn("previous retrieval citations", messages[1]["content"])
+        self.assertIn('"chunk_id": 51', messages[1]["content"])
+
     def test_build_chat_completion_payload_enables_json_mode(self) -> None:
         payload = llm_router_service.build_chat_completion_payload(
             model="qwen-turbo",
@@ -55,3 +69,39 @@ class LlmRouterServiceTests(unittest.TestCase):
         self.assertEqual(payload["response_format"], {"type": "json_object"})
         self.assertEqual(payload["temperature"], 0)
         self.assertEqual(payload["max_tokens"], 64)
+
+    def test_parse_native_tool_call(self) -> None:
+        call = llm_router_service.parse_native_tool_call(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_chunk_neighbors",
+                                        "arguments": '{"chunk_id":51,"radius":2}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        )
+        self.assertIsNotNone(call)
+        assert call is not None
+        self.assertEqual(call.name, "get_chunk_neighbors")
+        self.assertEqual(call.arguments, {"chunk_id": 51, "radius": 2})
+        self.assertEqual(call.call_id, "call_1")
+
+    def test_parse_native_tool_call_without_call_returns_none(self) -> None:
+        self.assertIsNone(
+            llm_router_service.parse_native_tool_call(
+                {"choices": [{"message": {"role": "assistant", "content": "无需工具"}}]}
+            )
+        )

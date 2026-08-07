@@ -102,6 +102,54 @@ class HybridRetrievalTests(unittest.TestCase):
         self.assertEqual(captured["bm25"], (7, 3, "采购复核的触发条件", 9))
         self.assertEqual(len(hits), 2)
 
+    def test_hybrid_retrieval_runs_original_and_rewrite_queries(self) -> None:
+        captured = []
+        original_dense = retrieval_service.search_similar_chunks
+        original_bm25 = retrieval_service.search_bm25_chunks
+        original_rerank = retrieval_service.rerank_semantic_hits
+        original_settings = retrieval_service.get_settings
+        try:
+            def fake_dense(organization_id, knowledge_base_id, query, *, top_k):
+                captured.append(("dense", query))
+                return [build_hit(f"dense-{query}", 10, 0.9, query)]
+
+            def fake_bm25(organization_id, knowledge_base_id, query, *, top_k):
+                captured.append(("bm25", query))
+                return [build_hit(f"bm25-{query}", 11, 8.0, query)]
+
+            retrieval_service.search_similar_chunks = fake_dense
+            retrieval_service.search_bm25_chunks = fake_bm25
+            retrieval_service.rerank_semantic_hits = lambda query, hits, *, top_n: hits
+            retrieval_service.get_settings = lambda: SimpleNamespace(
+                retrieval_dense_candidate_k=5,
+                retrieval_bm25_candidate_k=5,
+                retrieval_rrf_k=60,
+                retrieval_rerank_top_n=5,
+            )
+
+            retrieval_service.retrieve_hybrid_chunks(
+                organization_id=7,
+                knowledge_base_id=3,
+                query="这个流程多久完成？",
+                query_variants=["差旅报销提交时限是多少？"],
+                top_k=3,
+            )
+        finally:
+            retrieval_service.search_similar_chunks = original_dense
+            retrieval_service.search_bm25_chunks = original_bm25
+            retrieval_service.rerank_semantic_hits = original_rerank
+            retrieval_service.get_settings = original_settings
+
+        self.assertEqual(
+            captured,
+            [
+                ("dense", "这个流程多久完成？"),
+                ("bm25", "这个流程多久完成？"),
+                ("dense", "差旅报销提交时限是多少？"),
+                ("bm25", "差旅报销提交时限是多少？"),
+            ],
+        )
+
     def test_hybrid_retrieval_falls_back_to_rrf_when_reranker_is_unavailable(self) -> None:
         original_dense = retrieval_service.search_similar_chunks
         original_bm25 = retrieval_service.search_bm25_chunks

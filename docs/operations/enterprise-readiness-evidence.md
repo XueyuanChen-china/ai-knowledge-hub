@@ -7,12 +7,40 @@
 | 能力 | 证据位置 | 状态 |
 | --- | --- | --- |
 | 多格式 parser / block / chunk | `backend/tests/test_multiformat_e2e_fixtures.py`、fixture expected | 已自动化 |
-| OSS -> Celery -> PostgreSQL -> Elasticsearch | `backend/scripts/test_multiformat_e2e.py` | 真实环境可复现 |
+| OSS -> Celery -> PostgreSQL -> Elasticsearch | `backend/scripts/test_multiformat_e2e.py`、`docs/operations/demo-and-acceptance.md` | 脚本可复现，真实结果需按次记录 |
 | Dense + BM25 + RRF + rerank | `backend/tests/test_hybrid_retrieval.py`、retrieval report | 已自动化 |
 | JWT/RBAC/跨组织边界 | `backend/tests/test_resource_authorization.py`、U10 E2E | 单测已覆盖，真实负向需执行 |
 | SSE / interrupt / resume | `backend/tests/test_chat_api.py`、`test_graph_checkpoint_persistence.py` | 已自动化 |
-| 前端 lint/build/unit/browser | `frontend/tests/`、`frontend/playwright.config.ts` | 已自动化 |
+| 前端 lint/build/unit/browser | `frontend/tests/`、`frontend/playwright.config.ts` | lint/build/unit 已通过，browser 需在运行环境执行 |
 | live/ready、JSON 日志、metrics | `backend/tests/test_health_api.py`、`test_observability.py` | 已自动化 |
+
+## 最新自动化验证
+
+执行日期：2026-08-06
+
+```text
+后端 unittest：230 passed，5 skipped
+前端 Vitest：9 passed
+前端 lint：passed
+前端 production build：passed
+git diff --check：passed
+```
+
+自动化测试使用 fake/mock 隔离 OSS、Qwen 等外部凭据。`skipped` 不代表功能失败，而是表示该项需要真实外部环境或显式 E2E 开关。
+
+## 真实验收状态
+
+以下项目不能只靠单元测试宣称完成，需按 [Demo 与 U10 验收](demo-and-acceptance.md) 执行后补充实际值：
+
+```text
+[ ] 五种格式真实 OSS 上传和最终 indexed
+[ ] 五种格式的 chunks 与 vector_id 核对
+[ ] Elasticsearch 搜索命中报告
+[ ] 前端浏览器 happy path
+[ ] viewer / 未登录 / 跨组织负向操作
+[ ] interrupt 后重启并 resume
+[ ] Qwen 原生 tool_call 的真实响应
+```
 
 ## U10 运行记录模板
 

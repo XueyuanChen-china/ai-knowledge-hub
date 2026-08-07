@@ -13,7 +13,9 @@ if str(TESTS_DIR) not in sys.path:
 
 from app.db.models import KnowledgeBase
 from app.graph import nodes
+import app.graph.workflow as graph_workflow
 from app.graph.workflow import build_basic_workflow
+from app.agent_tools.schemas import ToolCallRequest
 from app.services import rag_service
 from app.services.llm_router_service import RouterDecision
 from app.services.rag_service import RetrievedDocument
@@ -46,6 +48,7 @@ class GraphWorkflowTests(unittest.TestCase):
     def test_direct_question_does_not_trigger_retrieve(self) -> None:
         workflow = build_basic_workflow()
 
+        original_tool_call = graph_workflow.tool_call_node
         original_retrieve = nodes.rag_service.retrieve
         original_llm_route = nodes.llm_router_service.route_question_with_llm
         try:
@@ -102,7 +105,7 @@ class GraphWorkflowTests(unittest.TestCase):
             nodes.rag_service.retrieve = fake_retrieve
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="采购复核的触发条件是单次采购金额超过二十万元。\\n\\n参考来源：[1]",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),
@@ -207,6 +210,58 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertEqual(state["route"], "direct")
         self.assertEqual(state["route_reason"], "mock llm router")
 
+    def test_follow_up_tool_route_skips_retrieval(self) -> None:
+        workflow = build_basic_workflow()
+        original_llm_route = nodes.llm_router_service.route_question_with_llm
+        original_tool_planner = nodes.plan_readonly_tool_with_llm
+        original_tool_call = graph_workflow.tool_call_node
+        original_retrieve = nodes.rag_service.retrieve
+        try:
+            nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: RouterDecision(
+                route="tool",
+                reason="上一轮引用需要展开",
+                raw_output='{"route":"tool"}',
+            )
+            nodes.plan_readonly_tool_with_llm = lambda *args, **kwargs: ToolCallRequest(
+                name="get_document",
+                arguments={"document_id": 123},
+                reason="native tool call",
+            )
+
+            def fail_retrieve(*args, **kwargs):
+                raise AssertionError("tool follow-up must not retrieve again")
+
+            nodes.rag_service.retrieve = fail_retrieve
+
+            def fake_tool_call(state, session):
+                updated = dict(state)
+                updated["tool_results"] = [{"ok": True, "data": {"content": "原文"}}]
+                updated["tool_citations"] = [{"doc_id": 123}]
+                updated["tool_error"] = ""
+                updated["tool_call_count"] = 1
+                return updated
+
+            graph_workflow.tool_call_node = fake_tool_call
+
+            state = workflow.invoke(
+                {
+                    "question": "展开刚才命中的文档",
+                    "knowledge_base_id": self.knowledge_base.id,
+                    "route": "tool",
+                    "previous_citations": [{"doc_id": 123}],
+                },
+                session=self.session,
+            )
+        finally:
+            nodes.llm_router_service.route_question_with_llm = original_llm_route
+            nodes.plan_readonly_tool_with_llm = original_tool_planner
+            graph_workflow.tool_call_node = original_tool_call
+            nodes.rag_service.retrieve = original_retrieve
+
+        self.assertEqual(state["route"], "tool")
+        self.assertTrue(state["tool_results"])
+        self.assertIn("answer", state)
+
     def test_retrieve_node_marks_need_human_review_when_no_docs(self) -> None:
         original_retrieve = nodes.rag_service.retrieve
         try:
@@ -234,7 +289,7 @@ class GraphWorkflowTests(unittest.TestCase):
         original_generate = nodes.llm_answer_service.generate_answer
         try:
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="根据当前知识库检索结果，单次采购金额超过二十万元，需要采购委员会复核。",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),

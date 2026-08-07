@@ -73,29 +73,20 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    # 本地密钥从 backend/.env 注入；该文件必须被 .gitignore 忽略。
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment: &backend_environment
       APP_ENV: container
       CORS_ALLOW_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ai_knowledge_hub
       GRAPH_CHECKPOINT_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_knowledge_hub
-      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-development-secret-change-me}
       AUTH_REDIS_URL: redis://redis:6379/0
       ELASTICSEARCH_URL: http://elasticsearch:9200
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       UPLOAD_WORKER_ENABLED: "false"
       UPLOAD_PROCESSING_BACKEND: celery
-      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
-      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
-      OSS_ENDPOINT: ${OSS_ENDPOINT:-oss-cn-shanghai.aliyuncs.com}
-      OSS_REGION: ${OSS_REGION:-cn-shanghai}
-      OSS_BUCKET: ${OSS_BUCKET:-ai-knowledge-hub-xueyuan-dev}
-      OSS_STORAGE_PREFIX: ${OSS_STORAGE_PREFIX:-raw/dev}
-      LLM_ROUTER_BASE_URL: ${LLM_ROUTER_BASE_URL:-}
-      LLM_ROUTER_API_KEY: ${LLM_ROUTER_API_KEY:-}
-      LLM_ROUTER_MODEL: ${LLM_ROUTER_MODEL:-qwen-turbo}
-      LLM_ANSWER_BASE_URL: ${LLM_ANSWER_BASE_URL:-}
-      LLM_ANSWER_API_KEY: ${LLM_ANSWER_API_KEY:-}
-      LLM_ANSWER_MODEL: ${LLM_ANSWER_MODEL:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -119,6 +110,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     command: ["./scripts/start_worker.sh"]
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       <<: *backend_environment
       CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-10}
@@ -135,6 +129,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     command: ["./scripts/start_worker.sh"]
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       <<: *backend_environment
       CELERY_WORKER_CONCURRENCY: ${CELERY_EMBED_WORKER_CONCURRENCY:-1}

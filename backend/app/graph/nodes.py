@@ -1,16 +1,40 @@
 import re
 from typing import Optional
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from app.agent_tools.audit import record_tool_call_audit
+from app.agent_tools.registry import (
+    execute_readonly_tool,
+    plan_conversation_history_tool,
+    plan_readonly_tool,
+    plan_readonly_tool_with_llm,
+)
+from app.agent_tools.schemas import ToolCallRequest, ToolExecutionContext, ToolExecutionResult
 from app.config import get_settings
+from app.db.models import KnowledgeBase
 from app.graph.state import GraphState
-from app.services import llm_answer_service, llm_router_service, rag_service
+from app.observability.context import get_request_id, get_trace_id
+from app.observability.metrics import get_metrics
+from app.services import (
+    context_manager,
+    llm_answer_service,
+    llm_router_service,
+    query_rewrite_service,
+    rag_service,
+)
+from app.services.context_gap_detector import detect_context_gap
+from app.services.context_types import ContextItem, RecoveryAction
 
 START_NODE = "START"
 ROUTER_NODE = "router"
 DIRECT_NODE = "direct"
 RETRIEVE_NODE = "retrieve"
+QUERY_REWRITE_NODE = "query_rewrite"
+CONTEXT_GAP_CHECK_NODE = "context_gap_check"
+HISTORY_RECOVERY_NODE = "history_recovery"
+TOOL_DECISION_NODE = "tool_decision"
+TOOL_CALL_NODE = "tool_call"
 RELEVANCE_CHECK_NODE = "relevance_check"
 REVIEW_NODE = "review"
 ANSWER_NODE = "answer"
@@ -20,6 +44,27 @@ END_NODE = "END"
 DIRECT_ROUTE = "direct"
 RAG_ROUTE = "rag"
 COMPLEX_ROUTE = "complex"
+TOOL_ROUTE = "tool"
+
+TOOL_INTENT_MARKERS = (
+    "前后文",
+    "上下文",
+    "相邻",
+    "上一段",
+    "下一段",
+    "展开原文",
+    "完整原文",
+    "全文",
+    "详细内容",
+    "整份文档",
+    "有哪些文档",
+    "文档列表",
+    "所有文档",
+    "文件列表",
+    "知识条目详情",
+    "条目内容",
+    "这个知识条目",
+)
 
 DIRECT_GREETING_PATTERNS = (
     r"^(你好|您好|hi|hello)\b",
@@ -47,20 +92,189 @@ def router_node(state: GraphState) -> GraphState:
         raise ValueError("question must not be empty")
 
     knowledge_base_id = state.get("knowledge_base_id")
+    router_context = dict(state.get("router_context") or {})
+    router_context["previous_citations"] = list(state.get("previous_citations") or [])
     llm_decision = llm_router_service.route_question_with_llm(
         question,
         knowledge_base_id,
+        conversation_context=router_context,
     )
     if llm_decision is not None:
         route = llm_decision.route
         route_reason = llm_decision.reason
     else:
-        route, route_reason = route_question(question, knowledge_base_id)
+        route, route_reason = route_question(
+            question,
+            knowledge_base_id,
+            previous_citations=list(state.get("previous_citations") or []),
+        )
 
     updated_state = dict(state)
     updated_state["route"] = route
     updated_state["route_reason"] = route_reason
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [START_NODE, ROUTER_NODE])
+    return updated_state
+
+
+def query_rewrite_node(state: GraphState) -> GraphState:
+    """在 RAG 检索前按需生成补充查询。
+
+    明确问题只保留原始 query；只有当前问题依赖历史上下文时才调用 LLM。
+    """
+
+    question = str(state.get("question") or "").strip()
+    if not question:
+        raise ValueError("question must not be empty")
+
+    rewrite_context = dict(state.get("rewrite_context") or {})
+    recent_messages = list(rewrite_context.get("recent_messages") or [])
+    # 历史恢复结果作为“历史消息”补充给 Rewrite，但不覆盖原始近期消息。
+    for item in list(state.get("relevant_history") or []):
+        if isinstance(item, dict) and item.get("content"):
+            recent_messages.append(
+                {
+                    "role": "history",
+                    "content": str(item.get("content") or ""),
+                }
+            )
+    decision = query_rewrite_service.decide_query_rewrite(question, recent_messages)
+    queries = [question]
+    if decision.need_rewrite:
+        rewritten_queries = query_rewrite_service.rewrite_question_with_llm(
+            question,
+            recent_messages,
+        )
+        if rewritten_queries:
+            queries = rewritten_queries
+
+    updated_state = dict(state)
+    updated_state["rewrite_queries"] = queries
+    updated_state["rewrite_decision"] = "rewritten" if len(queries) > 1 else "skipped"
+    updated_state["rewrite_reason"] = decision.reason
+    updated_state["node_trace"] = append_trace(
+        state.get("node_trace"),
+        [QUERY_REWRITE_NODE],
+    )
+    return updated_state
+
+
+def context_gap_check_node(state: GraphState) -> GraphState:
+    """判断当前问题是否需要从当前会话恢复历史上下文。"""
+
+    context = dict(
+        state.get("rewrite_context")
+        or state.get("router_context")
+        or state.get("answer_context")
+        or {}
+    )
+    decision = detect_context_gap(str(state.get("question") or ""), context)
+    get_metrics().record_context_recovery(
+        "needed" if decision.need_recovery else "not_needed"
+    )
+    updated_state = dict(state)
+    updated_state["context_gap"] = decision.to_dict()
+    updated_state["history_recovery_used"] = False
+    updated_state["node_trace"] = append_trace(
+        state.get("node_trace"),
+        [CONTEXT_GAP_CHECK_NODE],
+    )
+    return updated_state
+
+
+def history_recovery_node(state: GraphState, session: Session) -> GraphState:
+    """按需查询当前会话历史，并把结果放回三个 Context Pack。"""
+
+    decision = dict(state.get("context_gap") or {})
+    updated_state = dict(state)
+    if not bool(decision.get("need_recovery")):
+        updated_state["relevant_history"] = list(state.get("relevant_history") or [])
+        updated_state["context_recovery_actions"] = list(
+            state.get("context_recovery_actions") or []
+        )
+        updated_state["node_trace"] = append_trace(
+            state.get("node_trace"),
+            [HISTORY_RECOVERY_NODE],
+        )
+        return updated_state
+
+    request = plan_conversation_history_tool(
+        str(state.get("question") or ""),
+        reason=str(decision.get("reason") or "context gap detected"),
+    )
+    try:
+        context = ToolExecutionContext(
+            organization_id=int(state.get("organization_id") or 0),
+            knowledge_base_id=int(state.get("knowledge_base_id") or 0),
+            user_id=int(state.get("user_id")) if state.get("user_id") else None,
+            role=str(state.get("role") or "viewer"),
+            conversation_id=(
+                int(state.get("conversation_id"))
+                if state.get("conversation_id")
+                else None
+            ),
+            request_id=get_request_id(),
+            trace_id=get_trace_id(),
+        )
+        result = execute_readonly_tool(request, context=context, session=session)
+    except Exception as exc:
+        result = ToolExecutionResult(
+            tool_name=request.name,
+            ok=False,
+            error_code="history_recovery_error",
+            error_message="history recovery failed",
+        )
+        _ = exc
+
+    result_payload = _model_dump(result)
+    updated_state["history_tool_results"] = [result_payload]
+    updated_state["history_recovery_used"] = True
+    updated_state["tool_call_count"] = int(state.get("tool_call_count") or 0) + 1
+
+    recovered_items: list[dict] = []
+    if result.ok:
+        data = result.data if isinstance(result.data, dict) else {}
+        for raw_message in list(data.get("messages") or []):
+            if not isinstance(raw_message, dict) or not raw_message.get("content"):
+                continue
+            recovered_items.append(
+                ContextItem(
+                    kind="relevant_history",
+                    content=(
+                        f"{raw_message.get('role') or 'history'}: "
+                        f"{raw_message.get('content') or ''}"
+                    ),
+                    source_ids=[str(raw_message.get("message_id") or "")],
+                    importance=float(raw_message.get("score") or 0.0),
+                    metadata={
+                        "message_id": raw_message.get("message_id"),
+                        "created_at": raw_message.get("created_at") or "",
+                        "matched_terms": raw_message.get("matched_terms") or [],
+                    },
+                ).to_dict()
+            )
+
+    updated_state["relevant_history"] = recovered_items
+    action = RecoveryAction(
+        action="search_conversation_history",
+        reason=str(decision.get("reason") or "context gap detected"),
+        success=bool(result.ok),
+        source_ids=[
+            str(item.get("source_ids", [""])[0])
+            for item in recovered_items
+            if item.get("source_ids")
+        ],
+    )
+    updated_state["context_recovery_actions"] = [action.to_dict()]
+    get_metrics().record_context_recovery("success" if result.ok else "failed")
+    for context_name in ("router_context", "rewrite_context", "answer_context"):
+        context_payload = dict(state.get(context_name) or {})
+        context_payload["relevant_history"] = recovered_items
+        context_payload["recovery_actions"] = [action.to_dict()]
+        updated_state[context_name] = context_payload
+    updated_state["node_trace"] = append_trace(
+        state.get("node_trace"),
+        [HISTORY_RECOVERY_NODE],
+    )
     return updated_state
 
 
@@ -137,6 +351,13 @@ def retrieve_node(
     retrieve_kwargs = {"top_k": top_k}
     if organization_id is not None:
         retrieve_kwargs["organization_id"] = int(organization_id)
+    query_variants = [
+        str(item).strip()
+        for item in list(state.get("rewrite_queries") or [])
+        if str(item).strip() and str(item).strip() != question
+    ]
+    if query_variants:
+        retrieve_kwargs["query_variants"] = query_variants
     retrieved_docs = rag_service.retrieve(
         question,
         int(knowledge_base_id),
@@ -174,6 +395,133 @@ def rag_retrieve_node(
     )
 
 
+def tool_decision_node(state: GraphState) -> GraphState:
+    """让 Qwen 原生选择只读工具，模型不可用时使用规则兜底。"""
+
+    question = str(state.get("question") or "")
+    retrieved_docs = list(state.get("retrieved_docs") or [])
+    previous_citations = list(state.get("previous_citations") or [])
+    normalized = normalize_question(question)
+    should_plan = str(state.get("route") or "") == TOOL_ROUTE or any(
+        marker in normalized for marker in TOOL_INTENT_MARKERS
+    )
+    request = None
+    planner_mode = "skipped"
+    if should_plan:
+        try:
+            request = plan_readonly_tool_with_llm(
+                question,
+                retrieved_docs=retrieved_docs,
+                previous_citations=previous_citations,
+                conversation_context=dict(state.get("answer_context") or {}),
+            )
+            if request is not None:
+                planner_mode = "qwen_native"
+        except RuntimeError:
+            # 原生工具协议不可用时继续走可测试的本地规则，避免普通问答整体失败。
+            planner_mode = "rule_fallback"
+        if request is None:
+            request = plan_readonly_tool(question, retrieved_docs)
+            if request is not None:
+                planner_mode = "rule_fallback"
+    updated_state = dict(state)
+    if request is None:
+        updated_state["tool_call"] = {}
+        updated_state["tool_used"] = False
+    else:
+        updated_state["tool_call"] = _model_dump(request)
+        updated_state["tool_used"] = True
+    updated_state["tool_planner_mode"] = planner_mode
+    updated_state["node_trace"] = append_trace(
+        state.get("node_trace"),
+        [TOOL_DECISION_NODE],
+    )
+    return updated_state
+
+
+def tool_call_node(state: GraphState, session: Session) -> GraphState:
+    """执行一个有上限的只读工具调用，并把结果写入 Context Manager 输入。"""
+
+    raw_call = dict(state.get("tool_call") or {})
+    updated_state = dict(state)
+    if not raw_call:
+        updated_state["tool_results"] = []
+        updated_state["tool_citations"] = []
+        updated_state["tool_error"] = ""
+        if str(state.get("route") or "") == TOOL_ROUTE:
+            updated_state["tool_error"] = "无法根据上一轮引用确定只读工具或目标资源。"
+            updated_state["need_human_review"] = True
+            updated_state["review_reason"] = updated_state["tool_error"]
+        updated_state["node_trace"] = append_trace(
+            state.get("node_trace"),
+            [TOOL_CALL_NODE],
+        )
+        return updated_state
+
+    try:
+        tool_request = ToolCallRequest(**raw_call)
+        organization_id = int(state.get("organization_id") or 0)
+        knowledge_base_id = int(state.get("knowledge_base_id") or 0)
+        if not organization_id and knowledge_base_id:
+            statement = select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+            knowledge_base = session.exec(statement).first()
+            organization_id = int(knowledge_base.organization_id) if knowledge_base else 0
+        context = ToolExecutionContext(
+            organization_id=organization_id,
+            knowledge_base_id=knowledge_base_id,
+            user_id=int(state.get("user_id")) if state.get("user_id") else None,
+            role=str(state.get("role") or "viewer"),
+            conversation_id=int(state.get("conversation_id")) if state.get("conversation_id") else None,
+            request_id=get_request_id(),
+            trace_id=get_trace_id(),
+        )
+    except Exception as exc:
+        updated_state["tool_results"] = []
+        updated_state["tool_citations"] = []
+        updated_state["tool_error"] = f"invalid tool call: {exc}"
+        updated_state["node_trace"] = append_trace(
+            state.get("node_trace"),
+            [TOOL_CALL_NODE],
+        )
+        return updated_state
+
+    call_count = int(state.get("tool_call_count") or 0)
+    max_calls = max(1, get_settings().agent_tool_max_calls_per_turn)
+    if call_count >= max_calls:
+        result = ToolExecutionResult(
+            tool_name=tool_request.name,
+            ok=False,
+            error_code="tool_call_limit",
+            error_message="tool call limit reached for this turn",
+        )
+        record_tool_call_audit(
+            session,
+            request=tool_request,
+            context=context,
+            result=result,
+            allowed=False,
+            duration_seconds=0.0,
+            reason="tool call limit reached",
+        )
+        updated_state["tool_call_count"] = call_count
+    else:
+        result = execute_readonly_tool(
+            tool_request,
+            context=context,
+            session=session,
+        )
+        updated_state["tool_call_count"] = call_count + 1
+
+    updated_state["tool_results"] = [result.model_dump() if hasattr(result, "model_dump") else result.dict()]
+    updated_state["tool_citations"] = list(result.citations)
+    updated_state["tool_error"] = str(result.error_message or "") if not result.ok else ""
+    updated_state["node_trace"] = append_trace(
+        state.get("node_trace"),
+        [TOOL_CALL_NODE],
+    )
+    return updated_state
+
+
 def answer_node(state: GraphState) -> GraphState:
     """Day 18 Answer Node。
 
@@ -188,18 +536,95 @@ def answer_node(state: GraphState) -> GraphState:
         raise ValueError("question must not be empty")
 
     retrieved_docs = list(state.get("retrieved_docs") or [])
-    result = llm_answer_service.generate_answer(
-        question,
-        retrieved_docs,
+    has_answer_context = bool(state.get("answer_context"))
+    answer_context = context_manager.build_answer_context(
+        recent_context=dict(state.get("answer_context") or {}),
+        retrieved_documents=retrieved_docs,
+        tool_results=_tool_result_context_texts(state),
+        relevant_history=list(state.get("relevant_history") or []),
+        recovery_actions=list(state.get("context_recovery_actions") or []),
     )
+    answer_context["rewrite_queries"] = list(state.get("rewrite_queries") or [])
+    answer_context["retrieval_context"] = str(
+        answer_context.get("retrieval_context") or ""
+    )
+    if has_answer_context:
+        result = llm_answer_service.generate_answer(
+            question,
+            retrieved_docs,
+            conversation_context=answer_context,
+        )
+    else:
+        result = llm_answer_service.generate_answer(question, retrieved_docs)
 
     updated_state = dict(state)
     updated_state["answer"] = result.answer
     updated_state["context"] = result.context
-    updated_state["citations"] = result.citations
+    updated_state["answer_context"] = answer_context
+    updated_state["citations"] = merge_citations(
+        result.citations,
+        list(state.get("tool_citations") or []),
+    )
     updated_state["answer_used_fallback"] = result.used_fallback
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [ANSWER_NODE, END_NODE])
     return updated_state
+
+
+def _tool_result_context_texts(state: GraphState) -> list[str]:
+    """只把工具协议中的 result 文本交给 Context Manager，避免传入任意对象。"""
+
+    texts: list[str] = []
+    all_results = list(state.get("history_tool_results") or []) + list(
+        state.get("tool_results") or []
+    )
+    for raw_result in all_results:
+        if not isinstance(raw_result, dict):
+            continue
+        try:
+            tool_name = str(raw_result.get("tool_name") or "unknown")
+            ok = bool(raw_result.get("ok"))
+            data = raw_result.get("data") if isinstance(raw_result.get("data"), dict) else {}
+            citations = raw_result.get("citations") if isinstance(raw_result.get("citations"), list) else []
+            error_code = raw_result.get("error_code")
+            error_message = raw_result.get("error_message")
+            parts = [f"tool={tool_name}", f"ok={str(ok).lower()}", f"data={data}"]
+            if citations:
+                parts.append(f"citations={citations}")
+            if error_code:
+                parts.append(f"error_code={error_code}")
+            if error_message:
+                parts.append(f"error_message={error_message}")
+            texts.append("; ".join(parts))
+        except Exception:
+            continue
+    return texts
+
+
+def merge_citations(*citation_groups: list[dict]) -> list[dict]:
+    """按 doc/chunk/item 去重，同时保留工具来源字段。"""
+
+    merged: list[dict] = []
+    seen: set[tuple[object, object, object]] = set()
+    for group in citation_groups:
+        for citation in group:
+            if not isinstance(citation, dict):
+                continue
+            key = (
+                citation.get("doc_id"),
+                citation.get("chunk_id"),
+                citation.get("knowledge_item_id"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(dict(citation))
+    return merged
+
+
+def _model_dump(model: object) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
 
 
 def relevance_check_node(state: GraphState) -> GraphState:
@@ -223,11 +648,16 @@ def relevance_check_node(state: GraphState) -> GraphState:
 
     updated_state = dict(state)
 
-    if hit_count == 0:
+    tool_succeeded = any(
+        isinstance(result, dict) and bool(result.get("ok"))
+        for result in list(state.get("tool_results") or [])
+    )
+
+    if hit_count == 0 and not tool_succeeded:
         updated_state["need_human_review"] = True
         updated_state["relevance_decision"] = "need_review"
         updated_state["review_reason"] = "no retrieved documents"
-    elif top_score < threshold:
+    elif top_score < threshold and not tool_succeeded:
         updated_state["need_human_review"] = True
         updated_state["relevance_decision"] = "need_review"
         updated_state["review_reason"] = (
@@ -315,7 +745,11 @@ def review_rejected_node(state: GraphState) -> GraphState:
     return updated_state
 
 
-def route_question(question: str, knowledge_base_id: Optional[int]) -> tuple[str, str]:
+def route_question(
+    question: str,
+    knowledge_base_id: Optional[int],
+    previous_citations: Optional[list[dict]] = None,
+) -> tuple[str, str]:
     """规则兜底路由。
 
     目标不是覆盖一切，而是在 LLM Router 不可用时仍然满足最小验收：
@@ -328,6 +762,13 @@ def route_question(question: str, knowledge_base_id: Optional[int]) -> tuple[str
     normalized = normalize_question(question)
     if is_direct_question(normalized):
         return (DIRECT_ROUTE, "matched direct rule")
+
+    if previous_citations and any(marker in normalized for marker in TOOL_INTENT_MARKERS):
+        return (TOOL_ROUTE, "当前问题引用上一轮检索结果，直接调用只读工具")
+
+    if any(marker in normalized for marker in ("有哪些文档", "文档列表", "所有文档", "文件列表")):
+        if knowledge_base_id is not None:
+            return (TOOL_ROUTE, "问题要求查询知识库文档列表")
 
     if is_complex_question(normalized):
         if knowledge_base_id is None:

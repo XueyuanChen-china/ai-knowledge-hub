@@ -20,6 +20,10 @@ import type {
   OrganizationRole,
   SecurityAuditLogListResponse,
   SemanticSearchResult,
+  UploadBatchPresignResponse,
+  UploadCompleteResponse,
+  UploadInitResponse,
+  UploadTaskRecord,
 } from "@/lib/api/types";
 import {
   parseSseEventChunk,
@@ -420,6 +424,162 @@ export async function uploadDocument(payload: {
     method: "POST",
     body: formData,
   });
+}
+
+export async function initializeOssUpload(payload: {
+  knowledgeBaseId: number;
+  file: File;
+}): Promise<UploadInitResponse> {
+  return request<UploadInitResponse>("/uploads/init", {
+    method: "POST",
+    body: JSON.stringify({
+      knowledge_base_id: payload.knowledgeBaseId,
+      filename: payload.file.name,
+      file_size: payload.file.size,
+      client_mime_type: payload.file.type,
+      auto_create_document: true,
+      auto_index_on_complete: true,
+    }),
+  });
+}
+
+export async function presignOssUploadParts(
+  uploadId: string,
+  partNumbers: number[],
+): Promise<UploadBatchPresignResponse> {
+  return request<UploadBatchPresignResponse>(
+    `/uploads/${encodeURIComponent(uploadId)}/parts/presign-batch`,
+    {
+      method: "POST",
+      body: JSON.stringify({ part_numbers: partNumbers }),
+    },
+  );
+}
+
+export async function confirmOssUploadPart(
+  uploadId: string,
+  payload: { partNumber: number; etag: string; partSize: number },
+): Promise<void> {
+  await request(`/uploads/${encodeURIComponent(uploadId)}/parts/complete`, {
+    method: "POST",
+    body: JSON.stringify({
+      part_number: payload.partNumber,
+      etag: payload.etag,
+      part_size: payload.partSize,
+    }),
+  });
+}
+
+export async function completeOssUpload(
+  uploadId: string,
+  totalParts: number,
+): Promise<UploadCompleteResponse> {
+  return request<UploadCompleteResponse>(
+    `/uploads/${encodeURIComponent(uploadId)}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_total_parts: totalParts }),
+    },
+  );
+}
+
+export async function abortOssUpload(uploadId: string): Promise<void> {
+  await request<void>(`/uploads/${encodeURIComponent(uploadId)}/abort`, {
+    method: "POST",
+  });
+}
+
+export async function getOssUploadTask(
+  uploadId: string,
+): Promise<UploadTaskRecord> {
+  return request<UploadTaskRecord>(
+    `/uploads/${encodeURIComponent(uploadId)}`,
+  );
+}
+
+async function putOssPart(
+  presignedUrl: string,
+  body: Blob,
+  contentType: string,
+): Promise<string> {
+  const headers = contentType ? { "Content-Type": contentType } : undefined;
+  const response = await fetch(presignedUrl, {
+    method: "PUT",
+    headers,
+    body,
+  });
+  if (!response.ok) {
+    throw new ApiError(`OSS 分片上传失败：HTTP ${response.status}`, response.status);
+  }
+
+  const etag = response.headers.get("ETag") ?? response.headers.get("etag");
+  if (!etag) {
+    throw new ApiError(
+      "OSS 未返回 ETag，请检查 Bucket CORS 是否暴露 ETag 响应头",
+      502,
+    );
+  }
+  return etag;
+}
+
+export async function uploadDocumentToOss(payload: {
+  knowledgeBaseId: number;
+  file: File;
+  onProgress?: (uploadedParts: number, totalParts: number) => void;
+}): Promise<UploadCompleteResponse> {
+  const initialized = await initializeOssUpload(payload);
+  try {
+    const partNumbers = Array.from(
+      { length: initialized.total_parts },
+      (_, index) => index + 1,
+    );
+    let uploadedParts = 0;
+
+    // 后端一次最多返回 20 个签名；前端按批次申请，并限制同时 PUT 的数量。
+    for (let offset = 0; offset < partNumbers.length; offset += 20) {
+      const batchNumbers = partNumbers.slice(offset, offset + 20);
+      const presigned = await presignOssUploadParts(
+        initialized.upload_id,
+        batchNumbers,
+      );
+      const parallelism = Math.max(1, presigned.recommended_parallelism || 3);
+      const queue = [...presigned.items];
+      while (queue.length > 0) {
+        const current = queue.splice(0, parallelism);
+        await Promise.all(
+          current.map(async (item) => {
+            const start = (item.part_number - 1) * initialized.part_size;
+            const part = payload.file.slice(
+              start,
+              Math.min(start + initialized.part_size, payload.file.size),
+            );
+            const etag = await putOssPart(
+              item.presigned_url,
+              part,
+              payload.file.type,
+            );
+            await confirmOssUploadPart(initialized.upload_id, {
+              partNumber: item.part_number,
+              etag,
+              partSize: part.size,
+            });
+            uploadedParts += 1;
+            payload.onProgress?.(uploadedParts, initialized.total_parts);
+          }),
+        );
+      }
+    }
+
+    return completeOssUpload(initialized.upload_id, initialized.total_parts);
+  } catch (error) {
+    // 分片失败时主动终止 OSS Multipart Upload，避免留下无法完成的临时对象。
+    try {
+      await abortOssUpload(initialized.upload_id);
+    } catch {
+      // 保留原始上传错误，清理失败由后端过期任务清理机制兜底。
+    }
+    throw error;
+  }
 }
 
 export async function indexDocument(

@@ -1,4 +1,4 @@
-# Demo 与 U10 验收
+# Demo 与最终验收
 
 本文是从干净环境验证项目的操作合同。命令默认在仓库根目录执行。
 
@@ -36,7 +36,7 @@ export E2E_BASE_URL='http://127.0.0.1:8000'
   --report data/retrieval_benchmarks/multiformat-e2e-u10.json
 ```
 
-也可以让 U10 happy path 自己调用登录接口：
+也可以让自动化 happy path 自己调用登录接口：
 
 ```bash
 export E2E_EMAIL='owner@u10-demo.invalid'
@@ -46,7 +46,23 @@ unset E2E_ACCESS_TOKEN
 
 它会上传 TXT、MD、PDF、DOCX、XLSX，等待 Celery 阶段完成，检查 document、knowledge item、PostgreSQL chunks、vector_id 和搜索命中。真实运行需要 OSS、RabbitMQ、Elasticsearch、BGE 模型和有效的应用 token。
 
-## 4. U10 自动门禁
+如果只想验证前端而不重新执行五格式上传，可以使用已经 indexed 的知识库进入：
+
+```text
+登录 -> 知识库 -> 语义搜索 -> 专家问答
+```
+
+推荐 Chat 问题：
+
+```text
+采购复核的触发条件是什么？
+展开刚才命中的供应商制度原文看看。
+这个 chunk 前后还有什么内容？
+```
+
+第二个问题应读取上一轮 citations 并进入 `tool` 路由；第三个问题应调用 `get_chunk_neighbors`，而不是重新执行完整 Dense/BM25 检索。
+
+## 4. 自动化门禁
 
 ```bash
 export RUN_ENTERPRISE_E2E=1
@@ -85,3 +101,21 @@ curl http://127.0.0.1:8000/health/ready
 ```
 
 先根据 `upload_id` 找 PostgreSQL 的 UploadTask 和 stage job，再根据 `document_id` 检查 documents/chunks，最后用 `vector_id` 在 Elasticsearch 查询。不要只根据前端的 500 判断失败位置。
+
+## 7. 验收记录要求
+
+每次真实验收至少记录：
+
+```text
+代码版本或 commit
+migration revision
+knowledge_base_id
+五种文件的 document_id、chunk_count 和最终状态
+检索报告路径
+Chat route、tool_planner_mode 和 citations
+权限负向结果
+interrupt/restart/resume 结果
+失败项及原因
+```
+
+不要把 access token、OSS 预签名 URL、Qwen API Key 或完整请求正文写入报告。

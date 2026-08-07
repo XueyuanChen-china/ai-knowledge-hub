@@ -39,6 +39,7 @@ def retrieve(
     *,
     organization_id: Optional[int] = None,
     top_k: int = 5,
+    query_variants: Optional[list[str]] = None,
 ) -> list[RetrievedDocument]:
     """根据问题从知识库里检索相关 chunk。"""
 
@@ -59,6 +60,7 @@ def retrieve(
         knowledge_base_id=knowledge_base_id,
         query=normalized_question,
         top_k=top_k,
+        query_variants=query_variants,
     )
     title_map = build_knowledge_item_title_map(
         hits,

@@ -6,6 +6,7 @@ from urllib import error, request
 
 from app.config import get_settings
 from app.observability.metrics import get_metrics
+from app.services import context_manager
 from app.services import rag_service
 
 
@@ -30,19 +31,39 @@ class StreamAnswerEvent:
 def generate_answer(
     question: str,
     documents: list[rag_service.RetrievedDocument],
+    conversation_context: Optional[dict] = None,
 ) -> rag_service.RagAnswerResult:
     """优先调用 LLM 生成答案，失败时回退到本地抽取式答案。"""
 
     fallback_result = rag_service.generate_answer(question, documents)
-    if not documents:
+    has_tool_context = bool(
+        conversation_context and conversation_context.get("tool_results")
+    )
+    has_history_context = bool(
+        conversation_context and conversation_context.get("relevant_history")
+    )
+    if not documents and not has_tool_context and not has_history_context:
         return fallback_result
 
     settings = resolve_answer_settings()
     if not settings.is_configured:
         return fallback_result
 
-    context = rag_service.format_context(documents)
-    messages = build_answer_messages(question, context)
+    prepared_context = context_manager.build_answer_context(
+        recent_context=conversation_context,
+        retrieved_documents=documents,
+    )
+    context = str(
+        prepared_context.get("retrieval_context")
+        or rag_service.format_context(documents)
+    )
+    context_documents = documents_for_context(documents, prepared_context)
+    conversation_context = prepared_context
+    messages = build_answer_messages(
+        question,
+        context,
+        conversation_context=conversation_context,
+    )
 
     started_at = time.perf_counter()
     try:
@@ -68,13 +89,13 @@ def generate_answer(
         return fallback_result
 
     citations = build_citations_from_context_numbers(
-        documents,
+        context_documents,
         structured.used_context_numbers,
     )
     if not citations:
-        citations = rag_service.build_citations(documents[:1])
+        citations = rag_service.build_citations(context_documents[:1])
 
-    answer = append_reference_labels(structured.answer.strip(), citations, documents)
+    answer = append_reference_labels(structured.answer.strip(), citations, context_documents)
     return rag_service.RagAnswerResult(
         answer=answer,
         context=context,
@@ -86,6 +107,7 @@ def generate_answer(
 def stream_answer(
     question: str,
     documents: list[rag_service.RetrievedDocument],
+    conversation_context: Optional[dict] = None,
 ) -> Iterator[StreamAnswerEvent]:
     """流式生成答案。
 
@@ -95,7 +117,13 @@ def stream_answer(
     """
 
     fallback_result = rag_service.generate_answer(question, documents)
-    if not documents:
+    has_tool_context = bool(
+        conversation_context and conversation_context.get("tool_results")
+    )
+    has_history_context = bool(
+        conversation_context and conversation_context.get("relevant_history")
+    )
+    if not documents and not has_tool_context and not has_history_context:
         yield from stream_fallback_result(fallback_result)
         return
 
@@ -104,8 +132,21 @@ def stream_answer(
         yield from stream_fallback_result(fallback_result)
         return
 
-    context = rag_service.format_context(documents)
-    messages = build_answer_messages(question, context)
+    prepared_context = context_manager.build_answer_context(
+        recent_context=conversation_context,
+        retrieved_documents=documents,
+    )
+    context = str(
+        prepared_context.get("retrieval_context")
+        or rag_service.format_context(documents)
+    )
+    context_documents = documents_for_context(documents, prepared_context)
+    conversation_context = prepared_context
+    messages = build_answer_messages(
+        question,
+        context,
+        conversation_context=conversation_context,
+    )
     raw_output_parts: list[str] = []
     streamed_answer = ""
     started_at = time.perf_counter()
@@ -151,16 +192,16 @@ def stream_answer(
     )
 
     citations = build_citations_from_context_numbers(
-        documents,
+        context_documents,
         structured.used_context_numbers,
     )
     if not citations:
-        citations = rag_service.build_citations(documents[:1])
+        citations = rag_service.build_citations(context_documents[:1])
 
     final_answer = append_reference_labels(
         structured.answer.strip(),
         citations,
-        documents,
+        context_documents,
     )
     if final_answer.startswith(streamed_answer):
         for character in final_answer[len(streamed_answer) :]:
@@ -189,6 +230,39 @@ class AnswerLlmSettings:
         return bool(self.base_url and self.api_key and self.model)
 
 
+def documents_for_context(
+    documents: list[rag_service.RetrievedDocument],
+    context: dict,
+) -> list[rag_service.RetrievedDocument]:
+    """只返回实际进入 Answer Context 的证据，保证引用编号不会映射到被省略的 chunk。"""
+
+    evidence_items = list(context.get("evidence_items") or [])
+    if not evidence_items and not context.get("omitted_items"):
+        return documents
+    if not evidence_items:
+        return []
+
+    keys = {
+        (
+            item.get("document_id"),
+            item.get("chunk_id"),
+            item.get("knowledge_item_id"),
+        )
+        for item in evidence_items
+        if isinstance(item, dict)
+    }
+    selected = []
+    for document in documents:
+        key = (
+            getattr(document, "doc_id", None),
+            getattr(document, "chunk_id", None),
+            getattr(document, "knowledge_item_id", None),
+        )
+        if key in keys:
+            selected.append(document)
+    return selected or documents
+
+
 def resolve_answer_settings() -> AnswerLlmSettings:
     """解析 Answer Node 的模型配置。
 
@@ -214,8 +288,12 @@ def resolve_answer_settings() -> AnswerLlmSettings:
     )
 
 
-def build_answer_messages(question: str, context: str) -> list[dict[str, str]]:
-    """构造 Answer Node Prompt。"""
+def build_answer_messages(
+    question: str,
+    context: str,
+    conversation_context: Optional[dict] = None,
+) -> list[dict[str, str]]:
+    """构造 Answer Node Prompt，只读取 Answer 专属上下文。"""
 
     system_prompt = "\n".join(
         [
@@ -228,13 +306,36 @@ def build_answer_messages(question: str, context: str) -> list[dict[str, str]]:
         ]
     )
 
-    user_prompt = "\n\n".join(
-        [
-            f"question: {question.strip()}",
-            "context:",
-            context.strip(),
-        ]
+    prompt_parts = [f"question: {question.strip()}"]
+    context_pack = context_manager.build_context_pack(
+        purpose="answer",
+        messages=list((conversation_context or {}).get("recent_messages") or []),
+        summary=(conversation_context or {}).get("conversation_summary")
+        or str((conversation_context or {}).get("summary") or ""),
+        retrieval_context=context,
+        tool_results=list((conversation_context or {}).get("tool_results") or []),
+        relevant_history=list((conversation_context or {}).get("relevant_history") or []),
     )
+    if context_pack.summary:
+        prompt_parts.append("conversation summary:\n" + context_pack.summary)
+    if context_pack.recent_messages:
+        prompt_parts.append(
+            "recent conversation:\n"
+            + "\n".join(
+                f"{item['role']}: {item['content']}"
+                for item in context_pack.recent_messages
+            )
+        )
+    if context_pack.relevant_history:
+        prompt_parts.append(
+            "relevant conversation history:\n"
+            + "\n".join(item.content for item in context_pack.relevant_history)
+        )
+    if context_pack.tool_results:
+        prompt_parts.append("tool results:\n" + "\n\n".join(context_pack.tool_results))
+    effective_context = context_pack.retrieval_context or context.strip()
+    prompt_parts.extend(["context:", effective_context])
+    user_prompt = "\n\n".join(prompt_parts)
 
     return [
         {"role": "system", "content": system_prompt},
