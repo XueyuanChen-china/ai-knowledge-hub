@@ -1,19 +1,25 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
 
-import HomePage from "@/app/page";
 import LoginPage from "@/app/login/page";
-import AccountPage from "@/app/account/page";
-import UserManagementPage from "@/app/admin/users/page";
-import ChatPage from "@/app/chat/page";
-import DocumentsPage from "@/app/documents/page";
-import KnowledgeBaseDetailPage from "@/app/knowledge-bases/[id]/page";
-import KnowledgeBasesPage from "@/app/knowledge-bases/page";
-import KnowledgeItemDetailPage from "@/app/knowledge-items/[id]/page";
-import SearchPage from "@/app/search/page";
 import { AppFrame } from "@/components/app-frame";
 import { AuthGate } from "@/components/auth-gate";
 import { PageHeader } from "@/components/page-header";
 import { Card, Stack, Text } from "@mantine/core";
+
+const HomePage = lazy(() => import("@/app/page"));
+const AccountPage = lazy(() => import("@/app/account/page"));
+const UserManagementPage = lazy(() => import("@/app/admin/users/page"));
+const ChatPage = lazy(() => import("@/app/chat/page"));
+const DocumentsPage = lazy(() => import("@/app/documents/page"));
+const KnowledgeBaseDetailPage = lazy(() => import("@/app/knowledge-bases/[id]/page"));
+const KnowledgeBasesPage = lazy(() => import("@/app/knowledge-bases/page"));
+const KnowledgeItemDetailPage = lazy(() => import("@/app/knowledge-items/[id]/page"));
+const SearchPage = lazy(() => import("@/app/search/page"));
+
+function RouteLoading() {
+  return <Text c="dimmed">正在加载页面...</Text>;
+}
 
 function ShellLayout() {
   return (
@@ -44,7 +50,9 @@ export function AppRouter() {
         <Route
           element={
             <AuthGate>
-              <ShellLayout />
+              <Suspense fallback={<RouteLoading />}>
+                <ShellLayout />
+              </Suspense>
             </AuthGate>
           }
         >

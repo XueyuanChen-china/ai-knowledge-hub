@@ -14,6 +14,12 @@ class GraphState(TypedDict, total=False):
     """
 
     question: str
+    router_context: dict
+    rewrite_context: dict
+    answer_context: dict
+    organization_id: int
+    user_id: int
+    role: str
     knowledge_base_id: int
     conversation_id: int
     thread_id: str
@@ -21,6 +27,22 @@ class GraphState(TypedDict, total=False):
 
     route: str
     route_reason: str
+    previous_citations: list[dict]
+    rewrite_queries: list[str]
+    rewrite_decision: str
+    rewrite_reason: str
+    tool_call: dict
+    tool_results: list[dict]
+    tool_citations: list[dict]
+    tool_error: str
+    tool_used: bool
+    tool_call_count: int
+    tool_planner_mode: str
+    history_tool_results: list[dict]
+    relevant_history: list[dict]
+    context_gap: dict
+    context_recovery_actions: list[dict]
+    history_recovery_used: bool
 
     retrieved_docs: list[RetrievedDocument]
     retrieval_hit_count: int

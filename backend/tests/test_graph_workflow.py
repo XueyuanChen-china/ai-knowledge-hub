@@ -13,11 +13,14 @@ if str(TESTS_DIR) not in sys.path:
 
 from app.db.models import KnowledgeBase
 from app.graph import nodes
+import app.graph.workflow as graph_workflow
 from app.graph.workflow import build_basic_workflow
+from app.agent_tools.schemas import ToolCallRequest
 from app.services import rag_service
 from app.services.llm_router_service import RouterDecision
 from app.services.rag_service import RetrievedDocument
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class GraphWorkflowTests(unittest.TestCase):
@@ -25,8 +28,14 @@ class GraphWorkflowTests(unittest.TestCase):
         self.test_database = PostgresTestDatabase()
         self.engine = self.test_database.create_engine()
         self.session = Session(self.engine)
+        self.principal = create_test_identity(self.session)
 
-        knowledge_base = KnowledgeBase(name="制度库", description="用于图工作流测试")
+        knowledge_base = KnowledgeBase(
+            name="制度库",
+            description="用于图工作流测试",
+            organization_id=self.principal.organization_id,
+            created_by_user_id=self.principal.user_id,
+        )
         self.session.add(knowledge_base)
         self.session.commit()
         self.session.refresh(knowledge_base)
@@ -39,6 +48,7 @@ class GraphWorkflowTests(unittest.TestCase):
     def test_direct_question_does_not_trigger_retrieve(self) -> None:
         workflow = build_basic_workflow()
 
+        original_tool_call = graph_workflow.tool_call_node
         original_retrieve = nodes.rag_service.retrieve
         original_llm_route = nodes.llm_router_service.route_question_with_llm
         try:
@@ -95,7 +105,7 @@ class GraphWorkflowTests(unittest.TestCase):
             nodes.rag_service.retrieve = fake_retrieve
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="采购复核的触发条件是单次采购金额超过二十万元。\\n\\n参考来源：[1]",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),
@@ -200,6 +210,58 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertEqual(state["route"], "direct")
         self.assertEqual(state["route_reason"], "mock llm router")
 
+    def test_follow_up_tool_route_skips_retrieval(self) -> None:
+        workflow = build_basic_workflow()
+        original_llm_route = nodes.llm_router_service.route_question_with_llm
+        original_tool_planner = nodes.plan_readonly_tool_with_llm
+        original_tool_call = graph_workflow.tool_call_node
+        original_retrieve = nodes.rag_service.retrieve
+        try:
+            nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: RouterDecision(
+                route="tool",
+                reason="上一轮引用需要展开",
+                raw_output='{"route":"tool"}',
+            )
+            nodes.plan_readonly_tool_with_llm = lambda *args, **kwargs: ToolCallRequest(
+                name="get_document",
+                arguments={"document_id": 123},
+                reason="native tool call",
+            )
+
+            def fail_retrieve(*args, **kwargs):
+                raise AssertionError("tool follow-up must not retrieve again")
+
+            nodes.rag_service.retrieve = fail_retrieve
+
+            def fake_tool_call(state, session):
+                updated = dict(state)
+                updated["tool_results"] = [{"ok": True, "data": {"content": "原文"}}]
+                updated["tool_citations"] = [{"doc_id": 123}]
+                updated["tool_error"] = ""
+                updated["tool_call_count"] = 1
+                return updated
+
+            graph_workflow.tool_call_node = fake_tool_call
+
+            state = workflow.invoke(
+                {
+                    "question": "展开刚才命中的文档",
+                    "knowledge_base_id": self.knowledge_base.id,
+                    "route": "tool",
+                    "previous_citations": [{"doc_id": 123}],
+                },
+                session=self.session,
+            )
+        finally:
+            nodes.llm_router_service.route_question_with_llm = original_llm_route
+            nodes.plan_readonly_tool_with_llm = original_tool_planner
+            graph_workflow.tool_call_node = original_tool_call
+            nodes.rag_service.retrieve = original_retrieve
+
+        self.assertEqual(state["route"], "tool")
+        self.assertTrue(state["tool_results"])
+        self.assertIn("answer", state)
+
     def test_retrieve_node_marks_need_human_review_when_no_docs(self) -> None:
         original_retrieve = nodes.rag_service.retrieve
         try:
@@ -227,7 +289,7 @@ class GraphWorkflowTests(unittest.TestCase):
         original_generate = nodes.llm_answer_service.generate_answer
         try:
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="根据当前知识库检索结果，单次采购金额超过二十万元，需要采购委员会复核。",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),
@@ -302,19 +364,19 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertIn("below threshold", state["review_reason"])
         self.assertIn("relevance_check", state["node_trace"])
 
-    def test_relevance_check_marks_need_review_when_docs_do_not_cover_key_terms(self) -> None:
+    def test_relevance_check_marks_need_review_when_critical_entity_is_missing(self) -> None:
         state = nodes.relevance_check_node(
             {
-                "question": "公司食堂夜班补贴标准是多少？",
+                "question": "R-001 风险由谁负责？",
                 "retrieved_docs": [
                     RetrievedDocument(
                         doc_id=10,
                         chunk_id=20,
                         knowledge_item_id=30,
                         title="采购制度",
-                        content="单次采购金额超过二十万元，需要采购委员会复核。",
+                        content="R-002 供应商交付延迟，由采购负责人跟进。",
                         score=0.91,
-                        metadata={"heading_path": ["采购制度", "采购复核"]},
+                        metadata={"heading_path": ["风险清单"]},
                     )
                 ],
                 "retrieval_hit_count": 1,
@@ -327,11 +389,49 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertEqual(state["relevance_decision"], "need_review")
         self.assertEqual(
             state["review_reason"],
-            "retrieved docs do not cover key query terms",
+            "retrieved docs do not cover critical query entities: r-001",
         )
         self.assertIn("relevance_check", state["node_trace"])
 
-    def test_workflow_does_not_answer_when_docs_do_not_cover_key_terms(self) -> None:
+    def test_relevance_check_uses_rerank_score_instead_of_small_rrf_score(self) -> None:
+        state = nodes.relevance_check_node(
+            {
+                "question": "采购复核的金额门槛是多少？",
+                "retrieved_docs": [
+                    RetrievedDocument(
+                        doc_id=10,
+                        chunk_id=20,
+                        knowledge_item_id=30,
+                        title="采购制度",
+                        content="单次采购金额超过二十万元，需要采购委员会复核。",
+                        score=0.03,
+                        metadata={
+                            "rrf_score": 0.03,
+                            "rerank_score": 0.94,
+                            "retrieval_sources": ["dense", "bm25"],
+                        },
+                    )
+                ],
+                "retrieval_hit_count": 1,
+                "relevance_score": 0.94,
+                "node_trace": ["START", "router", "retrieve"],
+            }
+        )
+
+        self.assertFalse(state["need_human_review"])
+        self.assertEqual(state["relevance_decision"], "confident")
+
+    def test_critical_entity_extraction_does_not_create_chinese_ngram_noise(self) -> None:
+        self.assertEqual(
+            nodes.extract_critical_query_entities("采购复核的触发条件是什么？"),
+            [],
+        )
+        self.assertEqual(
+            nodes.extract_critical_query_entities("R-001 超过 20 万元需要谁审批？"),
+            ["r-001", "20万元"],
+        )
+
+    def test_workflow_does_not_answer_when_critical_entity_is_missing(self) -> None:
         workflow = build_basic_workflow(retrieve_top_k=3)
 
         original_retrieve = nodes.rag_service.retrieve
@@ -344,9 +444,9 @@ class GraphWorkflowTests(unittest.TestCase):
                     chunk_id=20,
                     knowledge_item_id=30,
                     title="采购制度",
-                    content="单次采购金额超过二十万元，需要采购委员会复核。",
+                    content="R-002 供应商交付延迟，由采购负责人跟进。",
                     score=0.91,
-                    metadata={"heading_path": ["采购制度", "采购复核"]},
+                    metadata={"heading_path": ["风险清单"]},
                 )
             ]
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
@@ -358,7 +458,7 @@ class GraphWorkflowTests(unittest.TestCase):
 
             state = workflow.invoke(
                 {
-                    "question": "公司食堂夜班补贴标准是多少？",
+                    "question": "R-001 风险由谁负责？",
                     "knowledge_base_id": self.knowledge_base.id,
                 },
                 session=self.session,
@@ -372,7 +472,7 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertEqual(state["relevance_decision"], "need_review")
         self.assertEqual(
             state["review_reason"],
-            "retrieved docs do not cover key query terms",
+            "retrieved docs do not cover critical query entities: r-001",
         )
         self.assertEqual(state["answer"], "当前检索结果不足以支持直接回答，需要人工复核。")
         self.assertNotIn("answer", state["node_trace"])

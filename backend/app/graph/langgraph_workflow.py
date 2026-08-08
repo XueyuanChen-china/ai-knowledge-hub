@@ -1,12 +1,10 @@
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from sqlmodel import Session
 
 from app.graph import nodes
+from app.graph.checkpointer import get_graph_checkpointer
 from app.graph.state import GraphState
-
-CHECKPOINTER = InMemorySaver()
 
 
 def build_checkpointed_workflow(
@@ -14,7 +12,7 @@ def build_checkpointed_workflow(
     *,
     retrieve_top_k: int = 5,
 ):
-    """构造带 InMemorySaver 的 LangGraph 工作流。"""
+    """构造带 PostgreSQL checkpointer 的 LangGraph 工作流。"""
 
     builder = StateGraph(GraphState)
 
@@ -24,12 +22,32 @@ def build_checkpointed_workflow(
         lambda state: nodes.direct_answer_node(state),
     )
     builder.add_node(
+        "context_gap_check",
+        lambda state: nodes.context_gap_check_node(state),
+    )
+    builder.add_node(
+        "history_recovery",
+        lambda state: nodes.history_recovery_node(state, session),
+    )
+    builder.add_node(
+        "query_rewrite",
+        lambda state: nodes.query_rewrite_node(state),
+    )
+    builder.add_node(
         "retrieve",
         lambda state: nodes.retrieve_node(
             state,
             session,
             top_k=retrieve_top_k,
         ),
+    )
+    builder.add_node(
+        "tool_decision",
+        lambda state: nodes.tool_decision_node(state),
+    )
+    builder.add_node(
+        "tool_call",
+        lambda state: nodes.tool_call_node(state, session),
     )
     builder.add_node(
         "relevance_check",
@@ -52,12 +70,26 @@ def build_checkpointed_workflow(
         route_after_router,
         {
             nodes.DIRECT_ROUTE: "direct",
-            nodes.RAG_ROUTE: "retrieve",
+            nodes.RAG_ROUTE: "context_gap_check",
             nodes.COMPLEX_ROUTE: "complex",
+            nodes.TOOL_ROUTE: "tool_decision",
         },
     )
+    builder.add_edge("context_gap_check", "history_recovery")
+    builder.add_edge("history_recovery", "query_rewrite")
+    builder.add_edge("query_rewrite", "retrieve")
     builder.add_edge("direct", END)
-    builder.add_edge("retrieve", "relevance_check")
+    builder.add_edge("retrieve", "tool_decision")
+    builder.add_edge("tool_decision", "tool_call")
+    builder.add_conditional_edges(
+        "tool_call",
+        route_after_tool_call,
+        {
+            "answer": "answer",
+            "relevance_check": "relevance_check",
+            "human_review": "human_review",
+        },
+    )
     builder.add_conditional_edges(
         "relevance_check",
         route_after_relevance_check,
@@ -78,7 +110,7 @@ def build_checkpointed_workflow(
     builder.add_edge("review_rejected", END)
     builder.add_edge("complex", END)
 
-    return builder.compile(checkpointer=CHECKPOINTER)
+    return builder.compile(checkpointer=get_graph_checkpointer())
 
 
 def route_after_router(state: GraphState) -> str:
@@ -87,7 +119,20 @@ def route_after_router(state: GraphState) -> str:
         return nodes.DIRECT_ROUTE
     if route == nodes.COMPLEX_ROUTE:
         return nodes.COMPLEX_ROUTE
+    if route == nodes.TOOL_ROUTE:
+        return nodes.TOOL_ROUTE
     return nodes.RAG_ROUTE
+
+
+def route_after_tool_call(state: GraphState) -> str:
+    """区分初次 RAG 的工具增强和上一轮引用的直接工具路线。"""
+
+    route = str(state.get("route") or "")
+    if route == nodes.TOOL_ROUTE:
+        if state.get("tool_error"):
+            return "human_review"
+        return "answer"
+    return "relevance_check"
 
 
 def route_after_relevance_check(state: GraphState) -> str:

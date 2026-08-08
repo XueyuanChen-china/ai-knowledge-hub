@@ -1,0 +1,146 @@
+{
+  "dataset_id": "multiformat-enterprise-e2e-v1",
+  "version": "1.0.0",
+  "organization_slug": "org-demo",
+  "knowledge_base_name": "企业制度与运营知识库 E2E",
+  "license": "Synthetic test data; repository use permitted",
+  "source": "Project-authored deterministic fixtures",
+  "documents": [
+    {
+      "document_key": "travel-reimbursement-txt",
+      "filename": "travel_reimbursement.txt",
+      "file_type": "txt",
+      "expected_parser": "plain_text_parser",
+      "expected_block_types": [
+        "paragraph"
+      ],
+      "expected_element_count": 19,
+      "expected_section_count": 7,
+      "expected_block_count": 19,
+      "expected_heading_count": 6,
+      "expected_table_count": 0,
+      "expected_list_count": 0,
+      "expected_heading_paths": [
+        "差旅与费用报销管理办法",
+        "第二章 出差申请与预算审批",
+        "第四章 报销材料与提交时限"
+      ],
+      "min_chunk_count": 6,
+      "max_chunk_count": 20,
+      "sha256": "f8b006bf1ec71200da6a2607f782a7c0becf8c765dae913ded281af12b4e082b",
+      "size_bytes": 3743
+    },
+    {
+      "document_key": "supplier-admission-md",
+      "filename": "supplier_admission.md",
+      "file_type": "md",
+      "expected_parser": "markdown_parser",
+      "expected_block_types": [
+        "paragraph",
+        "list",
+        "table",
+        "code"
+      ],
+      "expected_element_count": 29,
+      "expected_section_count": 8,
+      "expected_block_count": 29,
+      "expected_heading_count": 14,
+      "expected_table_count": 1,
+      "expected_list_count": 3,
+      "expected_code_count": 1,
+      "expected_heading_paths": [
+        "供应商准入与持续评估规范",
+        "2. 标准准入流程",
+        "2.1 客户数据处理的强制条件"
+      ],
+      "min_chunk_count": 8,
+      "max_chunk_count": 24,
+      "sha256": "a9523b26a8db93e39b3d6d7c5b920116f3e67b8bdedad32faed15b6cfea999a8",
+      "size_bytes": 4703
+    },
+    {
+      "document_key": "security-response-pdf",
+      "filename": "security_incident_response.pdf",
+      "file_type": "pdf",
+      "expected_parser": "pdf_layout_parser",
+      "expected_page_count": 4,
+      "expected_table_count": 1,
+      "expected_element_count": 35,
+      "expected_section_count": 15,
+      "expected_block_count": 35,
+      "expected_heading_count": 15,
+      "expected_list_count": 0,
+      "expected_block_types": [
+        "heading",
+        "paragraph",
+        "table"
+      ],
+      "expected_heading_paths": [
+        "2. P1 首要时限",
+        "7. 分级与响应矩阵",
+        "9. 恢复与关闭"
+      ],
+      "min_chunk_count": 8,
+      "max_chunk_count": 30,
+      "sha256": "0152810ac830dea8be372324c277359518b402807531abc7f29f0c1c7bd5fd79",
+      "size_bytes": 170926
+    },
+    {
+      "document_key": "employee-handbook-docx",
+      "filename": "employee_handbook.docx",
+      "file_type": "docx",
+      "expected_parser": "docx_parser",
+      "expected_page_count": 5,
+      "expected_table_count": 2,
+      "expected_element_count": 30,
+      "expected_section_count": 15,
+      "expected_block_count": 30,
+      "expected_heading_count": 15,
+      "expected_list_count": 6,
+      "expected_block_types": [
+        "paragraph",
+        "list",
+        "table"
+      ],
+      "expected_heading_paths": [
+        "第二章 请假与远程办公",
+        "第三章 信息安全",
+        "第四章 入职、转岗与离职"
+      ],
+      "min_chunk_count": 8,
+      "max_chunk_count": 24,
+      "sha256": "700d1d21b9a17c9afef00161aec3042a0e1768ecfb123299349d992fad8f7264",
+      "size_bytes": 40058
+    },
+    {
+      "document_key": "budget-risk-xlsx",
+      "filename": "budget_and_risk_register.xlsx",
+      "file_type": "xlsx",
+      "expected_parser": "excel_parser",
+      "expected_sheet_count": 3,
+      "expected_table_count": 4,
+      "expected_element_count": 4,
+      "expected_section_count": 3,
+      "expected_block_count": 4,
+      "expected_heading_count": 0,
+      "expected_list_count": 0,
+      "expected_sheet_names": [
+        "预算总表",
+        "风险清单",
+        "供应商评分"
+      ],
+      "expected_block_types": [
+        "table"
+      ],
+      "expected_heading_paths": [
+        "预算总表",
+        "风险清单",
+        "供应商评分"
+      ],
+      "min_chunk_count": 4,
+      "max_chunk_count": 20,
+      "sha256": "f09e9ceaf9b4a9f3d878df8c75c08300021ab636359bb19b65996aa1e054153c",
+      "size_bytes": 6749
+    }
+  ]
+}

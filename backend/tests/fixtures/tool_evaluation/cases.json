@@ -1,0 +1,26 @@
+[
+  {
+    "question": "请给我这份文档的完整原文",
+    "expected_tool": "get_document"
+  },
+  {
+    "question": "请补充上一段和下一段上下文",
+    "expected_tool": "get_chunk_neighbors"
+  },
+  {
+    "question": "这个片段的相邻内容是什么",
+    "expected_tool": "get_chunk_neighbors"
+  },
+  {
+    "question": "这个知识库有哪些文档？",
+    "expected_tool": "list_knowledge_base_documents"
+  },
+  {
+    "question": "请看一下这个知识条目详情",
+    "expected_tool": "get_knowledge_item"
+  },
+  {
+    "question": "采购复核的触发条件是什么？",
+    "expected_tool": null
+  }
+]

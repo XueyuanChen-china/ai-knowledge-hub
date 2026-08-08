@@ -1,0 +1,65 @@
+{
+  "defaults": {
+    "target_chunk_size": 850,
+    "max_chunk_size": 1000,
+    "chunk_overlap": 200
+  },
+  "global_rules": {
+    "must_not_start_with_fragment": true,
+    "table_chunks_retain_header": true,
+    "heading_prefix_matches_metadata": true,
+    "required_metadata_any": [
+      "page_start",
+      "sheet_name",
+      "heading_path"
+    ]
+  },
+  "documents": {
+    "travel-reimbursement-txt": {
+      "min_chunk_count": 6,
+      "max_chunk_count": 20,
+      "required_content_terms": [
+        "20,000 元",
+        "发票",
+        "行程单",
+        "审批单"
+      ]
+    },
+    "supplier-admission-md": {
+      "min_chunk_count": 8,
+      "max_chunk_count": 24,
+      "required_content_terms": [
+        "安全问卷",
+        "隐私影响评估",
+        "customer_data"
+      ]
+    },
+    "security-response-pdf": {
+      "min_chunk_count": 8,
+      "max_chunk_count": 30,
+      "required_content_terms": [
+        "15 分钟",
+        "30 分钟",
+        "P1"
+      ]
+    },
+    "employee-handbook-docx": {
+      "min_chunk_count": 8,
+      "max_chunk_count": 24,
+      "required_content_terms": [
+        "远程办公",
+        "客户数据",
+        "账号停用"
+      ]
+    },
+    "budget-risk-xlsx": {
+      "min_chunk_count": 4,
+      "max_chunk_count": 20,
+      "required_content_terms": [
+        "AI 知识库重构",
+        "135000",
+        "R-003"
+      ]
+    }
+  }
+}

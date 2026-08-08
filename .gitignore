@@ -15,4 +15,10 @@ frontend/.next/
 backend/data/sqlite/
 backend/data/uploads/*
 !backend/data/uploads/.gitkeep
+backend/data/retrieval_benchmarks/
 backend/tests/fixtures/large_file_upload/sample_large_policy.txt
+frontend/test-results/
+frontend/playwright-report/
+backend/tmp/
+backend/scripts/node_modules/
+backend/scripts/node_modules

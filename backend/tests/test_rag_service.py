@@ -15,6 +15,7 @@ from app.db.models import KnowledgeBase, KnowledgeItem
 from app.services import rag_service
 from app.services.vector_service import SemanticSearchHit
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class RagServiceTests(unittest.TestCase):
@@ -22,8 +23,13 @@ class RagServiceTests(unittest.TestCase):
         self.test_database = PostgresTestDatabase()
         self.engine = self.test_database.create_engine()
         self.session = Session(self.engine)
+        self.principal = create_test_identity(self.session)
+        ownership = {
+            "organization_id": self.principal.organization_id,
+            "created_by_user_id": self.principal.user_id,
+        }
 
-        knowledge_base = KnowledgeBase(name="制度库", description="RAG 测试")
+        knowledge_base = KnowledgeBase(name="制度库", description="RAG 测试", **ownership)
         self.session.add(knowledge_base)
         self.session.commit()
         self.session.refresh(knowledge_base)
@@ -36,6 +42,7 @@ class RagServiceTests(unittest.TestCase):
             tags="[]",
             status="active",
             source_type="manual",
+            **ownership,
         )
         self.session.add(knowledge_item)
         self.session.commit()
@@ -47,9 +54,9 @@ class RagServiceTests(unittest.TestCase):
         self.test_database.dispose()
 
     def test_retrieve_enriches_titles(self) -> None:
-        original_search = rag_service.search_similar_chunks
+        original_search = rag_service.retrieve_hybrid_chunks
         try:
-            rag_service.search_similar_chunks = lambda **kwargs: [
+            rag_service.retrieve_hybrid_chunks = lambda **kwargs: [
                 SemanticSearchHit(
                     vector_id="vector_1",
                     chunk_id=31,
@@ -67,7 +74,7 @@ class RagServiceTests(unittest.TestCase):
                 top_k=3,
             )
         finally:
-            rag_service.search_similar_chunks = original_search
+            rag_service.retrieve_hybrid_chunks = original_search
 
         self.assertEqual(len(documents), 1)
         self.assertEqual(documents[0].title, "差旅报销流程")

@@ -6,13 +6,19 @@ from app.graph.nodes import (
     COMPLEX_ROUTE,
     DIRECT_ROUTE,
     RAG_ROUTE,
+    TOOL_ROUTE,
     answer_node,
     complex_answer_node,
+    context_gap_check_node,
     direct_answer_node,
+    history_recovery_node,
+    query_rewrite_node,
     relevance_check_node,
     retrieve_node,
     review_required_node,
     router_node,
+    tool_call_node,
+    tool_decision_node,
 )
 from app.graph.state import GraphState
 
@@ -51,15 +57,27 @@ class BasicGraphWorkflow:
             return direct_answer_node(routed_state)
 
         if route == RAG_ROUTE:
+            gap_state = context_gap_check_node(routed_state)
+            recovered_state = history_recovery_node(gap_state, session)
+            rewritten_state = query_rewrite_node(recovered_state)
             retrieved_state = retrieve_node(
-                routed_state,
+                rewritten_state,
                 session,
                 top_k=self.retrieve_top_k,
             )
-            checked_state = relevance_check_node(retrieved_state)
+            planned_state = tool_decision_node(retrieved_state)
+            tool_state = tool_call_node(planned_state, session)
+            checked_state = relevance_check_node(tool_state)
             if checked_state.get("need_human_review"):
                 return review_required_node(checked_state)
             return answer_node(checked_state)
+
+        if route == TOOL_ROUTE:
+            planned_state = tool_decision_node(routed_state)
+            tool_state = tool_call_node(planned_state, session)
+            if tool_state.get("tool_error"):
+                return review_required_node(tool_state)
+            return answer_node(tool_state)
 
         if route == COMPLEX_ROUTE:
             return complex_answer_node(routed_state)

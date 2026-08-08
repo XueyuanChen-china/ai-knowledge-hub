@@ -128,6 +128,51 @@ export interface DocumentIndexResponse {
   index_name: string;
 }
 
+export interface UploadInitResponse {
+  upload_id: string;
+  storage_provider: string;
+  bucket_name: string;
+  object_key: string;
+  part_size: number;
+  total_parts: number;
+  status: string;
+  expires_at: string;
+}
+
+export interface UploadBatchPresignItem {
+  part_number: number;
+  presigned_url: string;
+}
+
+export interface UploadBatchPresignResponse {
+  upload_id: string;
+  expire_seconds: number;
+  recommended_parallelism: number;
+  items: UploadBatchPresignItem[];
+  status: string;
+}
+
+export interface UploadCompleteResponse {
+  upload_id: string;
+  status: string;
+  detail: string;
+  completed_parts: number;
+  document_id: number | null;
+  processing_job_id: number | null;
+  processing_status: string;
+  processing_error_message: string;
+}
+
+export interface UploadTaskRecord {
+  upload_id: string;
+  status: string;
+  completed_parts: number;
+  total_parts: number;
+  document_id: number | null;
+  processing_status: string;
+  processing_error_message: string;
+}
+
 export interface ChunkRecord {
   id: number;
   knowledge_base_id: number;
@@ -218,6 +263,13 @@ export interface ChatRunResponse {
   relevance_decision: string;
   retrieval_hit_count: number;
   answer_used_fallback: boolean | null;
+  tool_used?: boolean;
+  tool_results?: Record<string, unknown>[];
+  tool_error?: string;
+  tool_call_count?: number;
+  context_gap?: Record<string, unknown>;
+  history_recovery_used?: boolean;
+  relevant_history?: Record<string, unknown>[];
   node_trace: string[];
 }
 
@@ -253,6 +305,9 @@ export interface ChatStreamNodeEvent {
   answer?: string;
   citations?: ChatCitation[];
   answer_used_fallback?: boolean | null;
+  context_gap?: Record<string, unknown>;
+  history_recovery_used?: boolean;
+  relevant_history?: Record<string, unknown>[];
 }
 
 export interface ChatStreamErrorEvent {

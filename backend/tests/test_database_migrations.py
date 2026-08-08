@@ -63,6 +63,39 @@ class DatabaseMigrationTests(unittest.TestCase):
         )
         check_database_ready(self.engine)
 
+        inspector = inspect(self.engine)
+        for table_name in (
+            "knowledge_bases",
+            "documents",
+            "knowledge_items",
+            "chunks",
+            "conversations",
+            "upload_tasks",
+        ):
+            column_names = {column["name"] for column in inspector.get_columns(table_name)}
+            self.assertIn("organization_id", column_names)
+        for table_name in (
+            "knowledge_bases",
+            "documents",
+            "knowledge_items",
+            "conversations",
+            "upload_tasks",
+        ):
+            column_names = {column["name"] for column in inspector.get_columns(table_name)}
+            self.assertIn("created_by_user_id", column_names)
+
+        conversation_columns = {
+            column["name"] for column in inspector.get_columns("conversations")
+        }
+        self.assertTrue(
+            {
+                "context_summary",
+                "context_summary_version",
+                "context_summary_through_message_id",
+                "context_summary_updated_at",
+            }.issubset(conversation_columns)
+        )
+
     def test_downgrade_and_upgrade_baseline_on_empty_schema(self) -> None:
         command.downgrade(self._config(), "base")
         self.assertEqual(inspect(self.engine).get_table_names(), ["alembic_version"])

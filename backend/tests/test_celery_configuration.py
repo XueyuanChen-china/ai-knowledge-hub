@@ -28,6 +28,14 @@ class CeleryConfigurationTests(unittest.TestCase):
         )
         self.assertIn("ai_knowledge_hub.dead", queues)
 
+    def test_embedding_has_a_separate_queue_and_route(self) -> None:
+        queues = {queue.name: queue for queue in celery_app.conf.task_queues}
+        self.assertIn("ai_knowledge_hub_embed", queues)
+        self.assertEqual(
+            celery_app.conf.task_routes["uploads.embed"]["queue"],
+            "ai_knowledge_hub_embed",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

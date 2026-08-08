@@ -101,6 +101,10 @@ class KnowledgeBase(SQLModel, table=True):
     # Optional[int] + default=None 表示创建对象时可以不传 id，由数据库自动生成。
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    # U4 起所有业务资源都必须归属一个组织，不能只依赖前端传入的 id。
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
+
     # 知识库名称。
     # index=True 表示给这个字段建索引，后续按名称搜索会更快。
     name: str = Field(index=True, max_length=100)
@@ -127,6 +131,9 @@ class Document(SQLModel, table=True):
     __tablename__ = "documents"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
 
     # 所属知识库。
     # foreign_key 会在数据库层面表达 documents.knowledge_base_id 指向 knowledge_bases.id。
@@ -161,6 +168,9 @@ class KnowledgeItem(SQLModel, table=True):
     __tablename__ = "knowledge_items"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
 
     # 所属知识库。
     knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
@@ -236,6 +246,9 @@ class Chunk(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    # 冗余保存组织归属，供 Elasticsearch 写入与过滤使用。
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+
     knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
 
     # 如果 chunk 来自上传文档，这里冗余记录原始 document id，方便按文件追溯。
@@ -277,6 +290,9 @@ class Conversation(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
+
     knowledge_base_id: int = Field(foreign_key="knowledge_bases.id", index=True)
 
     # 会话标题，可以后续由用户问题或 AI 自动生成。
@@ -287,6 +303,12 @@ class Conversation(SQLModel, table=True):
 
     # 是否在会话列表置顶。
     is_pinned: bool = Field(default=False, index=True)
+
+    # 历史消息过长时保存的摘要。完整 messages 仍然保留在 messages 表中。
+    context_summary: str = ""
+    context_summary_version: int = Field(default=0)
+    context_summary_through_message_id: Optional[int] = Field(default=None, index=True)
+    context_summary_updated_at: Optional[datetime] = Field(default=None)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -314,6 +336,36 @@ class Message(SQLModel, table=True):
     metadata_json: str = ""
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConversationMemory(SQLModel, table=True):
+    """会话级长期记忆。
+
+    这里只保存用户明确要求记住的少量事实、决定、偏好或约束。
+    它是 messages 的派生数据，不替代完整消息历史。
+    """
+
+    __tablename__ = "conversation_memories"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    conversation_id: int = Field(foreign_key="conversations.id", index=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+
+    # fact / decision / preference / constraint。
+    memory_type: str = Field(default="fact", index=True, max_length=50)
+    content: str
+    source_message_id: Optional[int] = Field(
+        default=None,
+        foreign_key="messages.id",
+        index=True,
+    )
+    importance: float = Field(default=1.0, index=True)
+    status: str = Field(default="active", index=True, max_length=30)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ReviewTask(SQLModel, table=True):
@@ -355,6 +407,9 @@ class UploadTask(SQLModel, table=True):
     __tablename__ = "upload_tasks"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    created_by_user_id: int = Field(foreign_key="users.id", index=True)
 
     # 对外暴露的稳定上传任务 ID。
     upload_id: str = Field(index=True, unique=True, max_length=64)
@@ -425,7 +480,7 @@ class UploadTask(SQLModel, table=True):
     # 错误信息。失败时用于排查。
     error_message: str = ""
 
-    # 预留上传人标识，当前先不强依赖用户系统。
+    # 历史展示字段；授权一律以 created_by_user_id 为准。
     created_by: str = Field(default="", max_length=100)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)

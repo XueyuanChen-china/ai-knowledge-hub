@@ -1,0 +1,16 @@
+# 本文件只表达本地开发的轻量默认值。生产近似环境可通过 compose.yml
+# 及外部环境变量覆盖端口、密钥、模型和 OSS 配置，不需要修改镜像定义。
+services:
+  backend:
+    # 搜索请求也会在 API 进程生成 query embedding，复用本地模型缓存。
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      LOG_LEVEL: debug
+  worker:
+    environment:
+      CELERY_LOG_LEVEL: info
+  embedding-worker:
+    # 本地复用宿主机已下载的 HuggingFace 模型，避免重建容器时重复下载 BGE-M3。
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface

@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # 当前运行环境：development / testing / production。
     app_env: str = "development"
 
+    # 标准 logging 的最低输出级别。U7 会统一转成 JSON 日志。
+    log_level: str = "INFO"
+
     # 允许跨域访问的前端来源，多个值用逗号分隔。
     # 例如：http://localhost:3000,http://127.0.0.1:3000
     cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -28,6 +31,13 @@ class Settings(BaseSettings):
     # 数据库连接地址。
     # 当前项目统一使用 PostgreSQL，不再保留 SQLite 运行时支持。
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/ai_knowledge_hub"
+
+    # LangGraph checkpoint 使用独立连接池。为空时复用 database_url，但不复用
+    # SQLModel 业务 Session，避免一次图执行长期占用请求事务。
+    graph_checkpoint_database_url: str = ""
+    graph_checkpoint_pool_min_size: int = 1
+    graph_checkpoint_pool_max_size: int = 4
+    graph_checkpoint_pool_timeout_seconds: float = 10.0
 
     # JWT 签名密钥只从环境变量读取；生产环境必须显式配置，不能使用代码默认值。
     auth_jwt_secret: str = Field(
@@ -66,8 +76,12 @@ class Settings(BaseSettings):
     # 是否校验证书。HTTP 本地开发先默认关闭。
     elasticsearch_verify_certs: bool = False
 
-    # 向量索引名前缀。后面会拼上 knowledge_base_id。
+    # 向量索引名前缀。后面会拼上版本号和 knowledge_base_id。
     elasticsearch_index_prefix: str = "knowledge_chunks_"
+
+    # 资源授权字段进入 ES 后使用新的具体索引。检索统一走 alias，
+    # 这样重建存量向量时可以先写新索引，再原子切换，不会覆盖旧索引。
+    elasticsearch_index_version: int = 2
 
     # content 字段使用的 analyzer。第一版显式使用 ES 内置 cjk analyzer，
     # 这样中文关键词检索时比默认 standard 更合适。
@@ -95,6 +109,18 @@ class Settings(BaseSettings):
     # 一次 embedding 的批大小。
     embedding_batch_size: int = 16
 
+    # U8 混合检索候选池配置。Dense 与 BM25 分别召回后，再做 RRF 融合。
+    retrieval_dense_candidate_k: int = 20
+    retrieval_bm25_candidate_k: int = 20
+    retrieval_rrf_k: int = 60
+
+    # U8 固定使用 BGE reranker。首次启动会加载独立模型，部署时应先完成模型预热。
+    retrieval_reranker_provider: str = "bge"
+    retrieval_reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    retrieval_reranker_device: str = "cpu"
+    retrieval_rerank_top_n: int = 20
+    retrieval_rerank_score_threshold: float = 0.78
+
     # LLM Router 的 OpenAI 兼容 Base URL。
     # 例如 DashScope / Model Studio 的 compatible-mode/v1 地址。
     llm_router_base_url: str = ""
@@ -120,9 +146,37 @@ class Settings(BaseSettings):
     # Answer Node 请求超时时间，单位秒。
     llm_answer_timeout_seconds: int = 40
 
-    # Relevance Check 的低分阈值。
-    # 如果 top score 低于这个值，就先不直接编答案，而是标记 need_human_review。
-    relevance_low_score_threshold: float = 0.78
+    # Context Management：不同 LLM 节点使用独立的上下文预算。
+    # 这里是估算 Token，不替代具体模型 tokenizer；目的是先防止上下文无限增长。
+    context_router_max_tokens: int = 800
+    context_rewrite_max_tokens: int = 1600
+    context_answer_max_tokens: int = 6000
+    context_message_max_chars: int = 1200
+    context_rewrite_recent_messages: int = 6
+    context_answer_recent_messages: int = 6
+    context_router_summary_max_tokens: int = 120
+    context_rewrite_summary_max_tokens: int = 250
+    context_answer_summary_max_tokens: int = 500
+    context_answer_retrieval_max_tokens: int = 4000
+    context_answer_tool_max_tokens: int = 1000
+    context_router_history_max_tokens: int = 0
+    context_rewrite_history_max_tokens: int = 400
+    context_answer_history_max_tokens: int = 1000
+    context_router_memory_max_tokens: int = 0
+    context_rewrite_memory_max_tokens: int = 300
+    context_answer_memory_max_tokens: int = 800
+    context_system_max_tokens: int = 180
+    context_pinned_max_tokens: int = 240
+    context_summary_trigger_chars: int = 12000
+    context_summary_min_new_chars: int = 3000
+    context_summary_max_tokens: int = 500
+    context_summary_keep_recent_messages: int = 6
+
+    # 只读 Agent 工具的资源和结果边界。工具结果仍会经过 Context Manager 再进入 LLM。
+    agent_tool_max_document_chars: int = 24000
+    agent_tool_max_list_documents: int = 50
+    agent_tool_max_neighbor_radius: int = 3
+    agent_tool_max_calls_per_turn: int = 1
 
     # 对象存储提供方。Phase 1 先固定支持阿里云 OSS。
     storage_provider: str = "aliyun-oss"
@@ -224,6 +278,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "amqp://guest:guest@localhost:5672//"
     celery_result_backend: str = ""
     celery_task_default_queue: str = "ai_knowledge_hub"
+
+    # embedding 使用独立队列，避免 BGE-M3 的模型加载拖慢普通阶段。
+    celery_embed_queue: str = "ai_knowledge_hub_embed"
 
     # RabbitMQ publisher confirm。Producer 发布后等待 Broker 返回确认，
     # 未确认时 apply_async 会抛出异常，调用方可以保留 job 为待投递状态并重试。

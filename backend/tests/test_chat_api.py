@@ -17,9 +17,11 @@ from app.db.database import get_session
 from app.db.models import Conversation, KnowledgeBase, Message, ReviewTask
 from app.graph import nodes
 from app.main import app
+from app.security.dependencies import get_current_principal
 from app.services import rag_service
 from app.services.rag_service import RetrievedDocument
 from postgres_test_utils import PostgresTestDatabase
+from resource_authorization_utils import create_test_identity
 
 
 class ChatApiTests(unittest.TestCase):
@@ -35,7 +37,14 @@ class ChatApiTests(unittest.TestCase):
         self.client = TestClient(app)
 
         with Session(self.engine) as session:
-            knowledge_base = KnowledgeBase(name="制度库", description="chat api test")
+            self.principal = create_test_identity(session)
+            app.dependency_overrides[get_current_principal] = lambda: self.principal
+            knowledge_base = KnowledgeBase(
+                name="制度库",
+                description="chat api test",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
+            )
             session.add(knowledge_base)
             session.commit()
             session.refresh(knowledge_base)
@@ -117,7 +126,7 @@ class ChatApiTests(unittest.TestCase):
             ]
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="采购复核的触发条件是单次采购金额超过二十万元。\n\n参考来源：[1]",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),
@@ -222,7 +231,7 @@ class ChatApiTests(unittest.TestCase):
             ]
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
             nodes.llm_answer_service.generate_answer = (
-                lambda question, documents: rag_service.RagAnswerResult(
+                lambda question, documents, **kwargs: rag_service.RagAnswerResult(
                     answer="采购复核的触发条件是单次采购金额超过二十万元。\n\n参考来源：[1]",
                     context=rag_service.format_context(documents),
                     citations=rag_service.build_citations(documents),
@@ -291,7 +300,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertTrue(interrupted_payload["need_human_review"])
         self.assertEqual(interrupted_payload["review_reason"], "no retrieved documents")
 
-    def test_chat_interrupts_when_high_score_docs_do_not_cover_key_terms(self) -> None:
+    def test_chat_interrupts_when_high_score_docs_miss_critical_entity(self) -> None:
         original_retrieve = nodes.rag_service.retrieve
         original_llm_route = nodes.llm_router_service.route_question_with_llm
         try:
@@ -301,9 +310,9 @@ class ChatApiTests(unittest.TestCase):
                     chunk_id=20,
                     knowledge_item_id=30,
                     title="采购制度",
-                    content="单次采购金额超过二十万元，需要采购委员会复核。",
+                    content="R-002 供应商交付延迟，由采购负责人跟进。",
                     score=0.91,
-                    metadata={"heading_path": ["采购制度", "采购复核"]},
+                    metadata={"heading_path": ["风险清单"]},
                 )
             ]
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
@@ -312,7 +321,7 @@ class ChatApiTests(unittest.TestCase):
                 "/api/chat",
                 json={
                     "knowledge_base_id": self.knowledge_base_id,
-                    "question": "公司食堂夜班补贴标准是多少？",
+                    "question": "R-001 风险由谁负责？",
                 },
             )
         finally:
@@ -326,7 +335,7 @@ class ChatApiTests(unittest.TestCase):
         self.assertEqual(payload["relevance_decision"], "need_review")
         self.assertEqual(
             payload["review_reason"],
-            "retrieved docs do not cover key query terms",
+            "retrieved docs do not cover critical query entities: r-001",
         )
 
     def test_list_conversations_returns_persisted_threads(self) -> None:
@@ -335,11 +344,15 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="第一次问题",
                 thread_id="thread-1",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             second = Conversation(
                 knowledge_base_id=self.knowledge_base_id,
                 title="第二次问题",
                 thread_id="thread-2",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(first)
             session.add(second)
@@ -386,6 +399,8 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="采购问题",
                 thread_id="thread-history",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(conversation)
             session.commit()
@@ -441,6 +456,8 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="旧标题",
                 thread_id="thread-update",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(conversation)
             session.commit()
@@ -470,6 +487,8 @@ class ChatApiTests(unittest.TestCase):
                 knowledge_base_id=self.knowledge_base_id,
                 title="待删除会话",
                 thread_id="thread-delete",
+                organization_id=self.principal.organization_id,
+                created_by_user_id=self.principal.user_id,
             )
             session.add(conversation)
             session.commit()

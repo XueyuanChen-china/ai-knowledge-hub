@@ -28,6 +28,13 @@ class SemanticSearchHit:
     content: str
     score: float
     metadata: dict[str, Any]
+    # U8 检索链路会把 dense、BM25、RRF 和 rerank 的证据一并保留下来。
+    # score 表示当前排序阶段使用的最终分数；原始分数不能被覆盖丢失。
+    retrieval_sources: tuple[str, ...] = ()
+    dense_score: Optional[float] = None
+    bm25_score: Optional[float] = None
+    rrf_score: Optional[float] = None
+    rerank_score: Optional[float] = None
 
 
 def build_stable_vector_id(chunk: Chunk) -> str:
@@ -72,6 +79,8 @@ def embed_chunks(chunks: list[Chunk]) -> list[list[float]]:
 def index_chunks(
     chunks: list[Chunk],
     embeddings: list[list[float]],
+    *,
+    activate_alias: bool = True,
 ) -> VectorIndexResult:
     """使用已生成的 embedding 写入 Elasticsearch。"""
 
@@ -81,10 +90,13 @@ def index_chunks(
         raise ValueError("chunks and embeddings must have the same length")
 
     knowledge_base_id = chunks[0].knowledge_base_id
+    organization_id = chunks[0].organization_id
     if any(chunk.knowledge_base_id != knowledge_base_id for chunk in chunks):
         raise ValueError("all chunks must belong to the same knowledge base")
+    if any(chunk.organization_id != organization_id for chunk in chunks):
+        raise ValueError("all chunks must belong to the same organization")
 
-    index_name = build_index_name(knowledge_base_id)
+    index_name = build_concrete_index_name(knowledge_base_id)
     client = get_elasticsearch_client()
     ensure_index(client, index_name)
     validate_embedding_dimensions(embeddings)
@@ -101,6 +113,12 @@ def index_chunks(
         for chunk, vector_id, embedding in zip(chunks, vector_ids, embeddings)
     )
     execute_bulk_actions(client, actions, refresh=refresh)
+    if activate_alias:
+        activate_index_alias(
+            client,
+            alias_name=build_index_alias_name(knowledge_base_id),
+            concrete_index_name=index_name,
+        )
 
     return VectorIndexResult(
         index_name=index_name,
@@ -130,6 +148,7 @@ def delete_vectors(
 
 
 def search_similar_chunks(
+    organization_id: int,
     knowledge_base_id: int,
     query: str,
     *,
@@ -159,8 +178,82 @@ def search_similar_chunks(
             "query_vector": query_vector,
             "k": top_k,
             "num_candidates": num_candidates,
+            "filter": build_retrieval_scope_filters(
+                organization_id=organization_id,
+                knowledge_base_id=knowledge_base_id,
+            ),
         },
     )
+
+    return parse_search_hits(response, retrieval_source="dense")
+
+
+def search_bm25_chunks(
+    organization_id: int,
+    knowledge_base_id: int,
+    query: str,
+    *,
+    top_k: int = 5,
+) -> list[SemanticSearchHit]:
+    """使用 Elasticsearch BM25 检索正文。
+
+    Dense 与 BM25 必须共享相同的组织、知识库过滤条件；否则 RRF 融合前就可能
+    混入无权数据。这里显式复用 build_retrieval_scope_filters()。
+    """
+
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise ValueError("query must not be empty")
+
+    index_name = build_index_name(knowledge_base_id)
+    client = get_elasticsearch_client()
+    if not client.indices.exists(index=index_name):
+        return []
+
+    response = client.search(
+        index=index_name,
+        size=top_k,
+        query={
+            "bool": {
+                "must": [
+                    {
+                        "match": {
+                            "content": {
+                                "query": normalized_query,
+                            }
+                        }
+                    }
+                ],
+                "filter": build_retrieval_scope_filters(
+                    organization_id=organization_id,
+                    knowledge_base_id=knowledge_base_id,
+                ),
+            }
+        },
+    )
+
+    return parse_search_hits(response, retrieval_source="bm25")
+
+
+def build_retrieval_scope_filters(
+    *,
+    organization_id: int,
+    knowledge_base_id: int,
+) -> list[dict[str, dict[str, int]]]:
+    """构造所有检索器共用的 ES 授权范围过滤。"""
+
+    return [
+        {"term": {"organization_id": organization_id}},
+        {"term": {"knowledge_base_id": knowledge_base_id}},
+    ]
+
+
+def parse_search_hits(
+    response: dict[str, Any],
+    *,
+    retrieval_source: str,
+) -> list[SemanticSearchHit]:
+    """把 ES 命中统一转换为带来源证据的检索结果。"""
 
     hits: list[SemanticSearchHit] = []
     for raw_hit in response.get("hits", {}).get("hits", []):
@@ -170,6 +263,7 @@ def search_similar_chunks(
         if chunk_id is None:
             chunk_id = metadata.get("chunk_id")
 
+        raw_score = float(raw_hit.get("_score", 0.0))
         hits.append(
             SemanticSearchHit(
                 vector_id=source.get("vector_id", raw_hit.get("_id", "")),
@@ -177,8 +271,11 @@ def search_similar_chunks(
                 document_id=source.get("document_id"),
                 knowledge_item_id=source.get("knowledge_item_id"),
                 content=source.get("content", ""),
-                score=float(raw_hit.get("_score", 0.0)),
+                score=raw_score,
                 metadata=metadata,
+                retrieval_sources=(retrieval_source,),
+                dense_score=raw_score if retrieval_source == "dense" else None,
+                bm25_score=raw_score if retrieval_source == "bm25" else None,
             )
         )
 
@@ -186,8 +283,24 @@ def search_similar_chunks(
 
 
 def build_index_name(knowledge_base_id: int) -> str:
+    """返回业务查询使用的稳定 alias 名称。"""
+
+    return build_index_alias_name(knowledge_base_id)
+
+
+def build_index_alias_name(knowledge_base_id: int) -> str:
     settings = get_settings()
-    return f"{settings.elasticsearch_index_prefix}{knowledge_base_id}"
+    return f"{settings.elasticsearch_index_prefix}{knowledge_base_id}_active"
+
+
+def build_concrete_index_name(knowledge_base_id: int) -> str:
+    """返回实际承载当前 mapping 的版本化 ES 索引名。"""
+
+    settings = get_settings()
+    return (
+        f"{settings.elasticsearch_index_prefix}v"
+        f"{settings.elasticsearch_index_version}_{knowledge_base_id}"
+    )
 
 
 def build_index_document(
@@ -205,6 +318,7 @@ def build_index_document(
         "chunk_id": chunk.id,
         "content": chunk.content,
         "embedding": embedding,
+        "organization_id": chunk.organization_id,
         "knowledge_base_id": chunk.knowledge_base_id,
         "document_id": chunk.document_id,
         "knowledge_item_id": chunk.knowledge_item_id,
@@ -222,6 +336,7 @@ def build_vector_metadata(chunk: Chunk) -> dict[str, Any]:
     metadata.update(
         {
             "chunk_id": chunk.id,
+            "organization_id": chunk.organization_id,
             "knowledge_base_id": chunk.knowledge_base_id,
             "document_id": chunk.document_id,
             "knowledge_item_id": chunk.knowledge_item_id,
@@ -440,6 +555,7 @@ def ensure_index(client, index_name: str) -> None:
             "properties": {
                 "vector_id": {"type": "keyword"},
                 "chunk_id": {"type": "integer"},
+                "organization_id": {"type": "integer"},
                 "content": {
                     "type": "text",
                     "analyzer": settings.elasticsearch_content_analyzer,
@@ -466,6 +582,30 @@ def ensure_index(client, index_name: str) -> None:
             }
         },
     )
+
+
+def activate_index_alias(client, *, alias_name: str, concrete_index_name: str) -> None:
+    """把查询 alias 原子地切到指定具体索引。
+
+    旧索引不会被删除。重建完成前客户端仍走旧 alias，重建完成后一次请求切换，
+    因而 PostgreSQL 与 ES 的授权字段不会长期处于半同步状态。
+    """
+
+    try:
+        current_indices = list(client.indices.get_alias(name=alias_name).keys())
+    except Exception as exc:
+        if not is_not_found_exception(exc):
+            raise
+        current_indices = []
+    actions = [
+        {"remove": {"index": index_name, "alias": alias_name}}
+        for index_name in current_indices
+        if index_name != concrete_index_name
+    ]
+    if concrete_index_name not in current_indices:
+        actions.append({"add": {"index": concrete_index_name, "alias": alias_name}})
+    if actions:
+        client.indices.update_aliases(actions=actions)
 
 
 def is_not_found_exception(exc: Exception) -> bool:

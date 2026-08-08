@@ -28,10 +28,10 @@ class UploadServiceTests(unittest.TestCase):
         )
 
     def test_build_object_key_uses_system_generated_path(self) -> None:
-        object_key = build_object_key("raw/dev", 7, "upl_abcd1234", ".pdf")
+        object_key = build_object_key("raw/dev", 3, 7, "upl_abcd1234", ".pdf")
         self.assertEqual(
             object_key,
-            "raw/dev/7/upl_abcd1234/source.pdf",
+            "raw/dev/3/7/upl_abcd1234/source.pdf",
         )
 
     def test_validate_upload_init_request_rejects_path_traversal_filename(self) -> None:

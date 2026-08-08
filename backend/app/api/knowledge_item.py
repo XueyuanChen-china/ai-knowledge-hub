@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
 from app.db.database import get_session
-from app.db.models import Chunk, KnowledgeBase, KnowledgeItem
+from app.db.models import Chunk, KnowledgeItem
 from app.schemas.chunk import ChunkRead
 from app.schemas.knowledge_item import (
     KnowledgeItemCreate,
@@ -21,8 +21,21 @@ from app.services.text_splitter import (
     split_document_text,
 )
 from app.services.vector_service import add_chunks, delete_vectors
+from app.security.dependencies import Principal, require_permission
+from app.security.policies import (
+    PERMISSION_CONTENT_DELETE,
+    PERMISSION_CONTENT_READ,
+    PERMISSION_CONTENT_WRITE,
+)
+from app.security.resource_access import (
+    get_knowledge_base_or_404,
+    get_knowledge_item_or_404 as get_scoped_knowledge_item_or_404,
+)
 
 router = APIRouter(prefix="/knowledge-items", tags=["knowledge-items"])
+read_dependency = require_permission(PERMISSION_CONTENT_READ)
+write_dependency = require_permission(PERMISSION_CONTENT_WRITE)
+delete_dependency = require_permission(PERMISSION_CONTENT_DELETE)
 
 ALLOWED_KNOWLEDGE_ITEM_STATUSES = {"draft", "active", "disabled"}
 
@@ -40,6 +53,7 @@ def validate_knowledge_item_status(item_status: str) -> None:
 
 def ensure_knowledge_base_exists(
     knowledge_base_id: int,
+    principal: Principal,
     session: Session,
 ) -> None:
     """确认知识库存在。
@@ -47,27 +61,17 @@ def ensure_knowledge_base_exists(
     创建或更新知识条目时，如果 knowledge_base_id 不存在，就不应该写入脏数据。
     """
 
-    knowledge_base = session.get(KnowledgeBase, knowledge_base_id)
-    if knowledge_base is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
+    get_knowledge_base_or_404(knowledge_base_id, principal, session)
 
 
 def get_knowledge_item_or_404(
     knowledge_item_id: int,
+    principal: Principal,
     session: Session,
 ) -> KnowledgeItem:
     """读取知识条目，不存在就直接抛 404。"""
 
-    knowledge_item = session.get(KnowledgeItem, knowledge_item_id)
-    if knowledge_item is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge item not found",
-        )
-    return knowledge_item
+    return get_scoped_knowledge_item_or_404(knowledge_item_id, principal, session)
 
 
 @router.post(
@@ -77,6 +81,7 @@ def get_knowledge_item_or_404(
 )
 def create_knowledge_item(
     payload: KnowledgeItemCreate,
+    principal: Principal = Depends(write_dependency),
     session: Session = Depends(get_session),
 ) -> KnowledgeItem:
     """手动创建知识条目。
@@ -85,9 +90,11 @@ def create_knowledge_item(
     """
 
     validate_knowledge_item_status(payload.status)
-    ensure_knowledge_base_exists(payload.knowledge_base_id, session)
+    ensure_knowledge_base_exists(payload.knowledge_base_id, principal, session)
 
     knowledge_item = KnowledgeItem(
+        organization_id=principal.organization_id,
+        created_by_user_id=principal.user_id,
         knowledge_base_id=payload.knowledge_base_id,
         title=payload.title,
         content=payload.content,
@@ -108,6 +115,7 @@ def create_knowledge_item(
 def list_knowledge_items(
     knowledge_base_id: Optional[int] = Query(default=None),
     status_filter: Optional[str] = Query(default=None, alias="status"),
+    principal: Principal = Depends(read_dependency),
     session: Session = Depends(get_session),
 ) -> list[KnowledgeItem]:
     """查询知识条目列表，支持按知识库和状态过滤。
@@ -122,9 +130,12 @@ def list_knowledge_items(
     if status_filter is not None:
         validate_knowledge_item_status(status_filter)
 
-    statement = select(KnowledgeItem)
+    statement = select(KnowledgeItem).where(
+        KnowledgeItem.organization_id == principal.organization_id
+    )
 
     if knowledge_base_id is not None:
+        ensure_knowledge_base_exists(knowledge_base_id, principal, session)
         statement = statement.where(KnowledgeItem.knowledge_base_id == knowledge_base_id)
 
     if status_filter is not None:
@@ -137,6 +148,7 @@ def list_knowledge_items(
 @router.get("/{knowledge_item_id}", response_model=KnowledgeItemRead)
 def get_knowledge_item(
     knowledge_item_id: int,
+    principal: Principal = Depends(read_dependency),
     session: Session = Depends(get_session),
 ) -> KnowledgeItem:
     """查询单个知识条目。
@@ -144,7 +156,7 @@ def get_knowledge_item(
     对应接口：GET /knowledge-items/{id}
     """
 
-    return get_knowledge_item_or_404(knowledge_item_id, session)
+    return get_knowledge_item_or_404(knowledge_item_id, principal, session)
 
 
 @router.post(
@@ -154,11 +166,12 @@ def get_knowledge_item(
 )
 def split_knowledge_item_into_chunks(
     knowledge_item_id: int,
+    principal: Principal = Depends(write_dependency),
     session: Session = Depends(get_session),
 ) -> KnowledgeItemChunkResponse:
     """把手动知识条目切成 chunks，并写入 chunks 表。"""
 
-    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, principal, session)
 
     if not knowledge_item.content.strip():
         raise HTTPException(
@@ -182,11 +195,12 @@ def split_knowledge_item_into_chunks(
 )
 def index_knowledge_item(
     knowledge_item_id: int,
+    principal: Principal = Depends(write_dependency),
     session: Session = Depends(get_session),
 ) -> KnowledgeItemIndexResponse:
     """切分手动知识条目并写入 PostgreSQL + Elasticsearch。"""
 
-    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, principal, session)
 
     if not knowledge_item.content.strip():
         raise HTTPException(
@@ -221,6 +235,7 @@ def index_knowledge_item(
 @router.get("/{knowledge_item_id}/chunks", response_model=list[ChunkRead])
 def list_knowledge_item_chunks(
     knowledge_item_id: int,
+    principal: Principal = Depends(read_dependency),
     session: Session = Depends(get_session),
 ) -> list[Chunk]:
     """查询某个知识条目下的所有 chunks。
@@ -228,7 +243,7 @@ def list_knowledge_item_chunks(
     对应接口：GET /knowledge-items/{knowledge_item_id}/chunks
     """
 
-    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, principal, session)
 
     statement = (
         select(Chunk)
@@ -242,6 +257,7 @@ def list_knowledge_item_chunks(
 def update_knowledge_item(
     knowledge_item_id: int,
     payload: KnowledgeItemUpdate,
+    principal: Principal = Depends(write_dependency),
     session: Session = Depends(get_session),
 ) -> KnowledgeItem:
     """编辑知识条目。
@@ -250,9 +266,9 @@ def update_knowledge_item(
     """
 
     validate_knowledge_item_status(payload.status)
-    ensure_knowledge_base_exists(payload.knowledge_base_id, session)
+    ensure_knowledge_base_exists(payload.knowledge_base_id, principal, session)
 
-    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, principal, session)
 
     knowledge_item.knowledge_base_id = payload.knowledge_base_id
     knowledge_item.title = payload.title
@@ -271,6 +287,7 @@ def update_knowledge_item(
 @router.delete("/{knowledge_item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_knowledge_item(
     knowledge_item_id: int,
+    principal: Principal = Depends(delete_dependency),
     session: Session = Depends(get_session),
 ) -> None:
     """删除知识条目。
@@ -278,7 +295,7 @@ def delete_knowledge_item(
     对应接口：DELETE /knowledge-items/{id}
     """
 
-    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, session)
+    knowledge_item = get_knowledge_item_or_404(knowledge_item_id, principal, session)
 
     existing_vector_ids = get_existing_knowledge_item_vector_ids(knowledge_item.id, session)
     if existing_vector_ids:
@@ -349,6 +366,7 @@ def regenerate_knowledge_item_chunks(
             metadata.setdefault("heading_path", [knowledge_item.title])
 
         chunk = Chunk(
+            organization_id=knowledge_item.organization_id,
             knowledge_base_id=knowledge_item.knowledge_base_id,
             document_id=knowledge_item.source_document_id,
             knowledge_item_id=knowledge_item.id,

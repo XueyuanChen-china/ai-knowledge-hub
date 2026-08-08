@@ -27,16 +27,13 @@ import {
   ApiError,
   getDocuments,
   getKnowledgeBases,
-  indexDocument,
-  uploadDocument,
+  getOssUploadTask,
+  uploadDocumentToOss,
 } from "@/lib/api/client";
 import type {
-  DocumentIndexResponse,
   DocumentRecord,
   KnowledgeBase,
 } from "@/lib/api/types";
-
-type IndexingState = Record<number, boolean>;
 
 function formatTime(value: string) {
   return new Date(value).toLocaleString("zh-CN", {
@@ -72,9 +69,7 @@ export default function DocumentsPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [indexingState, setIndexingState] = useState<IndexingState>({});
-  const [lastIndexResult, setLastIndexResult] =
-    useState<DocumentIndexResponse | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<string>("");
   const [error, setError] = useState("");
 
   const selectedKnowledgeBase = useMemo(
@@ -123,7 +118,6 @@ export default function DocumentsPage() {
   async function handleKnowledgeBaseChange(value: string | null) {
     const nextValue = value ?? "";
     setSelectedKnowledgeBaseId(nextValue);
-    setLastIndexResult(null);
 
     if (!nextValue) {
       setDocuments([]);
@@ -154,13 +148,35 @@ export default function DocumentsPage() {
     try {
       setUploading(true);
       setError("");
-      const created = await uploadDocument({
+      setUploadProgress("正在初始化 OSS 上传任务...");
+      const completed = await uploadDocumentToOss({
         knowledgeBaseId: Number(selectedKnowledgeBaseId),
         file: selectedFile,
+        onProgress: (uploadedParts, totalParts) => {
+          setUploadProgress(`正在上传分片 ${uploadedParts}/${totalParts}...`);
+        },
       });
-      setDocuments((current) => [created, ...current]);
+      setUploadProgress("文件已合并，正在等待解析和索引...");
+      let task = await getOssUploadTask(completed.upload_id);
+      const deadline = Date.now() + 10 * 60 * 1000;
+      while (
+        task.processing_status === "pending" ||
+        task.processing_status === "running"
+      ) {
+        if (Date.now() >= deadline) {
+          throw new Error("文件处理超时，请稍后刷新文档列表查看状态");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        task = await getOssUploadTask(completed.upload_id);
+      }
+      if (task.processing_status === "failed") {
+        throw new Error(
+          task.processing_error_message || "文件解析或索引失败",
+        );
+      }
+      await loadDocumentsList(Number(selectedKnowledgeBaseId));
       setSelectedFile(null);
-      setLastIndexResult(null);
+      setUploadProgress("上传、解析、切片和索引已完成");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "文档上传失败");
     } finally {
@@ -184,38 +200,11 @@ export default function DocumentsPage() {
     }
   }
 
-  async function handleIndex(documentId: number) {
-    try {
-      setIndexingState((current) => ({ ...current, [documentId]: true }));
-      setError("");
-      const result = await indexDocument(documentId);
-      setLastIndexResult(result);
-      setDocuments((current) =>
-        current.map((document) =>
-          document.id === documentId
-            ? { ...document, status: "indexed" }
-            : document,
-        ),
-      );
-    } catch (err) {
-      setDocuments((current) =>
-        current.map((document) =>
-          document.id === documentId
-            ? { ...document, status: "failed" }
-            : document,
-        ),
-      );
-      setError(err instanceof ApiError ? err.message : "构建索引失败");
-    } finally {
-      setIndexingState((current) => ({ ...current, [documentId]: false }));
-    }
-  }
-
   return (
     <Stack gap="lg">
       <PageHeader
         title="文档上传与索引"
-        description="这一页负责 Day 25 的主流程：上传文档、查看文档列表、手动触发索引，并观察 indexed / failed 状态。"
+        description="上传文档后自动完成解析、切片、Embedding 和索引，并在列表中查看处理状态。"
       />
 
       {error ? (
@@ -257,8 +246,9 @@ export default function DocumentsPage() {
           </Group>
 
           <Text size="sm" c="dimmed">
-            当前知识库：{selectedKnowledgeBase?.name ?? "未选择"}。上传成功后会先进入
-            `uploaded`，点击“构建索引”后再进入 `indexed` 或 `failed`。
+            当前知识库：{selectedKnowledgeBase?.name ?? "未选择"}。文件会先直传阿里云 OSS，
+            上传完成后自动进入解析、切片、Embedding 和索引流程。
+            {uploadProgress ? ` ${uploadProgress}` : ""}
           </Text>
         </Stack>
       </Card>
@@ -282,13 +272,6 @@ export default function DocumentsPage() {
             </ActionIcon>
           </Group>
 
-          {lastIndexResult ? (
-            <Alert color="teal" title="最近一次索引完成">
-              文档 {lastIndexResult.document_id} 已写入 {lastIndexResult.vector_count} 条向量，
-              chunk 数 {lastIndexResult.chunk_count}，索引名 {lastIndexResult.index_name}。
-            </Alert>
-          ) : null}
-
           {loading ? (
             <Loader size="sm" />
           ) : documents.length === 0 ? (
@@ -305,7 +288,6 @@ export default function DocumentsPage() {
                   <Table.Th>状态</Table.Th>
                   <Table.Th>提取文本</Table.Th>
                   <Table.Th>上传时间</Table.Th>
-                  <Table.Th>操作</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -325,16 +307,6 @@ export default function DocumentsPage() {
                       </Text>
                     </Table.Td>
                     <Table.Td>{formatTime(document.created_at)}</Table.Td>
-                    <Table.Td>
-                      <Button
-                        size="xs"
-                        variant={document.status === "indexed" ? "light" : "filled"}
-                        loading={Boolean(indexingState[document.id])}
-                        onClick={() => void handleIndex(document.id)}
-                      >
-                        构建索引
-                      </Button>
-                    </Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>

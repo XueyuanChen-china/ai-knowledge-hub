@@ -1,15 +1,19 @@
 import json
 import re
+import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from urllib import error, request
 
 from app.config import get_settings
+from app.observability.metrics import get_metrics
+from app.services import context_manager
 
 DIRECT_ROUTE = "direct"
 RAG_ROUTE = "rag"
 COMPLEX_ROUTE = "complex"
-ALLOWED_ROUTES = {DIRECT_ROUTE, RAG_ROUTE, COMPLEX_ROUTE}
+TOOL_ROUTE = "tool"
+ALLOWED_ROUTES = {DIRECT_ROUTE, RAG_ROUTE, COMPLEX_ROUTE, TOOL_ROUTE}
 
 
 @dataclass
@@ -21,9 +25,20 @@ class RouterDecision:
     raw_output: str = ""
 
 
+@dataclass
+class NativeToolCall:
+    """Qwen OpenAI 兼容接口返回的原生工具调用。"""
+
+    name: str
+    arguments: dict[str, Any]
+    call_id: str = ""
+    raw_output: str = ""
+
+
 def route_question_with_llm(
     question: str,
     knowledge_base_id: Optional[int],
+    conversation_context: Optional[dict] = None,
 ) -> Optional[RouterDecision]:
     """调用 OpenAI 兼容接口做问题路由。
 
@@ -35,8 +50,13 @@ def route_question_with_llm(
     if not is_llm_router_configured():
         return None
 
-    messages = build_router_messages(question, knowledge_base_id)
+    messages = build_router_messages(
+        question,
+        knowledge_base_id,
+        conversation_context=conversation_context,
+    )
 
+    started_at = time.perf_counter()
     try:
         raw_output = call_openai_compatible_chat(
             base_url=settings.llm_router_base_url,
@@ -46,7 +66,14 @@ def route_question_with_llm(
             timeout_seconds=settings.llm_router_timeout_seconds,
         )
     except RuntimeError:
+        get_metrics().record_operation(
+            "llm_router", time.perf_counter() - started_at, outcome="error"
+        )
         return None
+
+    get_metrics().record_operation(
+        "llm_router", time.perf_counter() - started_at, outcome="success"
+    )
 
     return parse_router_output(raw_output)
 
@@ -65,6 +92,7 @@ def is_llm_router_configured() -> bool:
 def build_router_messages(
     question: str,
     knowledge_base_id: Optional[int],
+    conversation_context: Optional[dict] = None,
 ) -> list[dict[str, str]]:
     """构造 Router Prompt。"""
 
@@ -75,25 +103,46 @@ def build_router_messages(
     system_prompt = "\n".join(
         [
             "你是企业知识库问答系统的 Router。",
-            "你的任务是把用户问题分类成 direct、rag、complex 三种路线之一。",
+            "你的任务是把用户问题分类成 direct、rag、complex、tool 四种路线之一。",
             "direct: 打招呼、寒暄、通用概念解释、与当前知识库无关的问题。",
             "rag: 需要从知识库里检索一到几段内容即可回答的具体问题。",
             "complex: 需要总结、归纳、对比、梳理整个知识库或多篇文档的复杂问题。",
+            "tool: 用户引用上一轮已经找到的文档或切片，要求展开原文、查看前后文或列出文档；此路线不要重新做向量检索。",
             "你只能输出 JSON，不要输出额外解释。",
-            '格式固定为: {"route":"direct|rag|complex","reason":"一句简短原因"}',
+            '格式固定为: {"route":"direct|rag|complex|tool","reason":"一句简短原因"}',
         ]
     )
 
-    user_prompt = "\n".join(
-        [
-            f"knowledge_base_id: {knowledge_base_text}",
-            f"question: {question.strip()}",
-        ]
+    prompt_lines = [
+        f"knowledge_base_id: {knowledge_base_text}",
+        f"question: {question.strip()}",
+    ]
+    raw_context = conversation_context or {}
+    context_pack = context_manager.build_context_pack(
+        purpose="router",
+        messages=list(raw_context.get("recent_messages") or []),
+        summary=str(raw_context.get("summary") or ""),
     )
+    if context_pack.summary:
+        prompt_lines.append(f"conversation summary:\n{context_pack.summary}")
+    if context_pack.recent_messages:
+        prompt_lines.append(
+            "recent conversation:\n"
+            + "\n".join(
+                f"{item['role']}: {item['content']}"
+                for item in context_pack.recent_messages
+            )
+        )
+    previous_citations = raw_context.get("previous_citations") or []
+    if previous_citations:
+        prompt_lines.append(
+            "previous retrieval citations:\n"
+            + json.dumps(previous_citations[:10], ensure_ascii=False)
+        )
 
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": "\n".join(prompt_lines)},
     ]
 
 
@@ -104,13 +153,65 @@ def call_openai_compatible_chat(
     model: str,
     messages: list[dict[str, str]],
     timeout_seconds: int,
+    max_tokens: int = 64,
+    json_mode: bool = True,
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。"""
 
     payload = build_chat_completion_payload(
         model=model,
         messages=messages,
+        max_tokens=max_tokens,
+        json_mode=json_mode,
     )
+
+    return extract_message_content(
+        post_chat_completion(
+            base_url=base_url,
+            api_key=api_key,
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+
+def call_openai_compatible_chat_with_tools(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    timeout_seconds: int,
+    max_tokens: int = 256,
+) -> Optional[NativeToolCall]:
+    """使用 OpenAI 兼容的 tools/tool_choice 请求 Qwen 原生工具调用。"""
+
+    payload = build_chat_completion_payload(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        json_mode=False,
+    )
+    payload["tools"] = tools
+    payload["tool_choice"] = "auto"
+    response_data = post_chat_completion(
+        base_url=base_url,
+        api_key=api_key,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+    )
+    return parse_native_tool_call(response_data)
+
+
+def post_chat_completion(
+    *,
+    base_url: str,
+    api_key: str,
+    payload: dict[str, Any],
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    """发送一次 Chat Completions 请求并返回完整 JSON。"""
 
     endpoint = base_url.rstrip("/") + "/chat/completions"
     body = json.dumps(payload).encode("utf-8")
@@ -128,24 +229,61 @@ def call_openai_compatible_chat(
         with request.urlopen(http_request, timeout=timeout_seconds) as response:
             response_body = response.read().decode("utf-8")
     except error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(
-            f"llm router http error: status={exc.code}, body={error_body}"
-        ) from exc
+        raise RuntimeError(f"llm router http error: status={exc.code}") from exc
     except error.URLError as exc:
         raise RuntimeError(f"llm router network error: {exc.reason}") from exc
 
     try:
         data = json.loads(response_body)
-        return extract_message_content(data)
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError as exc:
         raise RuntimeError("llm router response format invalid") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("llm router response format invalid")
+    return data
+
+
+def parse_native_tool_call(response_data: dict[str, Any]) -> Optional[NativeToolCall]:
+    """从 Chat Completions 响应中解析第一个原生 tool_call。"""
+
+    try:
+        message = response_data["choices"][0]["message"]
+        tool_calls = message.get("tool_calls") or []
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("llm tool call response format invalid") from exc
+
+    if not tool_calls:
+        return None
+    first = tool_calls[0]
+    function = first.get("function") if isinstance(first, dict) else None
+    if not isinstance(function, dict):
+        raise RuntimeError("llm tool call function format invalid")
+    name = str(function.get("name") or "").strip()
+    raw_arguments = function.get("arguments")
+    if not name or raw_arguments is None:
+        raise RuntimeError("llm tool call is missing name or arguments")
+    if isinstance(raw_arguments, str):
+        try:
+            arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("llm tool call arguments are not valid JSON") from exc
+    else:
+        arguments = raw_arguments
+    if not isinstance(arguments, dict):
+        raise RuntimeError("llm tool call arguments must be an object")
+    return NativeToolCall(
+        name=name,
+        arguments=arguments,
+        call_id=str(first.get("id") or ""),
+        raw_output=json.dumps(first, ensure_ascii=False),
+    )
 
 
 def build_chat_completion_payload(
     *,
     model: str,
     messages: list[dict[str, str]],
+    max_tokens: int = 64,
+    json_mode: bool = True,
 ) -> dict:
     """构造 OpenAI 兼容 chat/completions 请求体。
 
@@ -154,13 +292,15 @@ def build_chat_completion_payload(
     - prompt 中必须包含 JSON 关键词
     """
 
-    return {
+    payload = {
         "model": model,
         "messages": messages,
         "temperature": 0,
-        "max_tokens": 64,
-        "response_format": {"type": "json_object"},
+        "max_tokens": max_tokens,
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    return payload
 
 
 def extract_message_content(response_data: dict) -> str:
@@ -196,7 +336,7 @@ def parse_router_output(raw_output: str) -> Optional[RouterDecision]:
         reason = str(payload.get("reason") or "").strip()
 
     if route is None:
-        match = re.search(r'"route"\s*:\s*"(direct|rag|complex)"', normalized_output, re.I)
+        match = re.search(r'"route"\s*:\s*"(direct|rag|complex|tool)"', normalized_output, re.I)
         if match:
             route = normalize_route(match.group(1))
 
@@ -204,7 +344,7 @@ def parse_router_output(raw_output: str) -> Optional[RouterDecision]:
         route = normalize_route(normalized_output)
 
     if route is None:
-        for candidate in (DIRECT_ROUTE, RAG_ROUTE, COMPLEX_ROUTE):
+        for candidate in (DIRECT_ROUTE, RAG_ROUTE, COMPLEX_ROUTE, TOOL_ROUTE):
             if re.search(rf"\b{candidate}\b", normalized_output, re.I):
                 route = candidate
                 break
