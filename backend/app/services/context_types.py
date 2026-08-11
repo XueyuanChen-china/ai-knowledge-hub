@@ -101,14 +101,23 @@ class EvidenceItem:
 
 @dataclass
 class ToolResultRef:
-    """工具结果的受控引用和摘要。"""
+    """工具结果的受控引用和摘要。
+
+    完整结果保存在持久化记录中；Context Pack 只携带 summary、source_ids
+    和 result_ref。这样工具输出可以从当前上下文淘汰，但仍能按引用恢复。
+    """
 
     tool_name: str
     summary: str
     source_ids: List[str] = field(default_factory=list)
+    result_ref: str = ""
     content: str = ""
     truncated: bool = False
     error: str = ""
+    created_at: str = ""
+    used_in_answer: bool = False
+    citation_used: bool = False
+    importance: str = "normal"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -120,7 +129,6 @@ class BudgetBreakdown:
 
     total: int
     system_instructions: int = 0
-    pinned_constraints: int = 0
     summary: int = 0
     recent_messages: int = 0
     persistent_memory: int = 0

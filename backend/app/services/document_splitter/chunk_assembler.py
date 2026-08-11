@@ -87,7 +87,11 @@ def assemble_chunks(
                 max_chunk_size,
                 chunk_overlap,
             )
-            current_blocks = build_semantic_overlap_blocks(current_blocks, chunk_overlap)
+            current_blocks = build_semantic_overlap_blocks(
+                current_blocks,
+                chunk_overlap,
+                next_block=block,
+            )
             current_length = calculate_blocks_length(current_blocks)
             current_section_key = current_blocks[0].metadata.get("section_index") if current_blocks else None
             separator_length = 2 if current_blocks else 0
@@ -145,7 +149,7 @@ def prepare_blocks_for_packing(
     """确保进入 pack 流程的每个 Block 都不会明显超过 max_chunk_size。"""
 
     prepared_blocks: list[Block] = []
-    for block in blocks:
+    for block_index, block in enumerate(blocks):
         if (
             block.block_type == "heading"
             and block.metadata.get("heading_path") == block.metadata.get("section_heading_path")
@@ -156,6 +160,7 @@ def prepare_blocks_for_packing(
                 block,
                 max_chunk_size=max_chunk_size,
                 chunk_overlap=chunk_overlap,
+                source_block_index=block_index,
             )
         )
     return prepared_blocks
@@ -166,6 +171,7 @@ def split_block_for_packing(
     *,
     max_chunk_size: int,
     chunk_overlap: int,
+    source_block_index: int,
 ) -> list[Block]:
     """按 block 类型选择切分策略。"""
 
@@ -178,6 +184,18 @@ def split_block_for_packing(
     if len(content) <= max_chunk_size:
         return [normalized_block]
 
+    # 只有同一个原始 Block 被拆成多个子 Block 时，才允许跨 Chunk 做语义 overlap。
+    # 独立的段落、列表、表格和代码块即使相邻，也不应该因为 packing flush 被重复复制。
+    split_metadata = {
+        **normalized_block.metadata,
+        "overlap_group_id": build_overlap_group_id(normalized_block, source_block_index),
+    }
+    normalized_block = Block(
+        block_type=normalized_block.block_type,
+        content=normalized_block.content,
+        metadata=split_metadata,
+    )
+
     if normalized_block.block_type == "table":
         return split_table_block(normalized_block, max_chunk_size, chunk_overlap)
 
@@ -188,6 +206,13 @@ def split_block_for_packing(
         return split_list_block(normalized_block, max_chunk_size, chunk_overlap)
 
     return split_text_block(normalized_block, max_chunk_size, chunk_overlap)
+
+
+def build_overlap_group_id(block: Block, source_block_index: int) -> str:
+    """为同一个原始 Block 的拆分结果生成稳定的 overlap 分组标识。"""
+
+    section_index = block.metadata.get("section_index", "unknown")
+    return f"section:{section_index}:block:{source_block_index}"
 
 
 def split_text_block(
@@ -579,10 +604,16 @@ def split_list_items(text: str) -> list[str]:
 def build_semantic_overlap_blocks(
     blocks: list[Block],
     chunk_overlap: int,
+    *,
+    next_block: Optional[Block] = None,
 ) -> list[Block]:
-    """从上一 chunk 末尾抽取语义级 overlap，避免半词 / 半句开头。"""
+    """从同源拆分 Block 的末尾抽取语义级 overlap，避免半词 / 半句开头。"""
 
-    if chunk_overlap <= 0 or not blocks:
+    if chunk_overlap <= 0 or not blocks or next_block is None:
+        return []
+
+    overlap_group_id = blocks[-1].metadata.get("overlap_group_id")
+    if not overlap_group_id or next_block.metadata.get("overlap_group_id") != overlap_group_id:
         return []
 
     overlap_blocks: list[Block] = []

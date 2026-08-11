@@ -55,6 +55,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             "users",
             "organization_memberships",
             "security_audit_logs",
+            "conversation_memories",
+            "conversation_tool_results",
         }
         self.assertTrue(expected_tables.issubset(set(inspect(self.engine).get_table_names())))
         self.assertEqual(

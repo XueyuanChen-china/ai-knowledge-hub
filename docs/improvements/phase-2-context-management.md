@@ -129,15 +129,28 @@ context_router_max_tokens = 800
 context_rewrite_max_tokens = 1600
 context_answer_max_tokens = 6000
 
-Router max_recent_messages = 2（由代码中的 router budget 固定）
-context_rewrite_recent_messages = 6
-context_answer_recent_messages = 6
+Router max_recent_messages = 2
+context_rewrite_recent_messages = 8（约 4 轮）
+context_answer_recent_messages = 12（约 6 轮）
 
 context_router_history_max_tokens = 0
 context_rewrite_history_max_tokens = 400
 context_answer_history_max_tokens = 1000
 context_answer_retrieval_max_tokens = 4000
 context_answer_tool_max_tokens = 1000
+
+context_summary_keep_recent_messages = 4（最近 2 轮）
+context_summary_min_compactable_messages = 4（至少 2 轮才有压缩资格）
+context_summary_min_compactable_tokens = 100
+context_summary_max_batch_messages = 12
+context_summary_target_ratio = 0.60
+context_pack_hard_watermark_ratio = 0.95
+context_pack_target_ratio = 0.75
+context_relevant_history_compacted_limit = 3
+context_relevant_history_emergency_limit = 1
+context_summary_soft_watermark_ratio = 0.70
+context_history_region_budget_tokens = 6000（历史区域预算）
+context_summary_hard_watermark_tokens = 6000（旧配置名，仅兼容）
 ```
 
 这里的 Token 是第一版估算值，不是模型 tokenizer 的精确值。当前算法大致使用：
@@ -188,7 +201,6 @@ truncated: bool
 
 ```python
 system_instructions: list[str]
-pinned_constraints: list[ContextItem]
 persistent_memory: list[ContextItem]
 conversation_summary: StructuredSummary | None
 recent_messages: list[dict[str, str]]
@@ -200,6 +212,9 @@ omitted_items: list[OmittedItem]
 recovery_actions: list[RecoveryAction]
 current_question: str
 ```
+
+`persistent_memory` 是唯一的长期优先记忆通道：承载用户明确确认的偏好、规则和决定；
+不再单独维护 `pinned_constraints`，避免两套“不可轻易裁剪”的内容发生职责重叠。
 
 ### 4.3 为什么需要 `EvidenceItem`
 
@@ -258,7 +273,7 @@ PostgreSQL messages + Conversation.context_summary
 Router 的职责是判断：
 
 ```text
-direct / rag / complex
+direct / rag / tool
 ```
 
 所以它主要拿：
@@ -311,10 +326,9 @@ Answer 的证据会被格式化成：
 
 ```text
 1. system_instructions
-2. pinned_constraints
+2. persistent_memory
 3. conversation_summary
-4. persistent_memory
-5. recent_messages
+4. recent_messages
 6. relevant_history
 7. evidence_items 或旧版 retrieval_context
 8. tool_result_refs 或旧版 tool_results
@@ -326,7 +340,6 @@ Answer 的证据会被格式化成：
 BudgetBreakdown
   total
   system_instructions
-  pinned_constraints
   summary
   persistent_memory
   recent_messages
@@ -339,11 +352,13 @@ BudgetBreakdown
 
 ### 6.1 滑动窗口解决什么问题
 
-最近消息窗口是最低成本的基础保护：
+最近消息窗口是最低成本的基础保护。当前统一按“轮”理解：一轮通常包含 user 和
+assistant 两条消息：
 
 ```text
-历史消息：M1 M2 M3 M4 M5 M6 M7 M8 M9 M10
-Answer 默认保留：                 M5 M6 M7 M8 M9 M10
+历史消息：T1 T2 T3 T4 T5 T6
+Answer 默认保留：          T5 T6
+摘要范围：                 T1 T2 T3 T4
 ```
 
 它能保证用户刚刚说过的内容还在，但它有明显缺点：更早的关键决定可能被淘汰。
@@ -356,7 +371,7 @@ Answer 默认保留：                 M5 M6 M7 M8 M9 M10
 - 一个 `EvidenceItem`，通常是一整个 chunk；
 - 一个 `relevant_history` 消息；
 - 一个结构化工具结果；
-- 一个 pinned constraint。
+- 一个重要或已被引用的工具结果引用。
 
 如果剩余预算只能放下 100 Token，而某个证据需要 300 Token，当前实现不会拿前
 100 Token，而是：
@@ -367,8 +382,21 @@ omitted_items   记录该证据和省略原因
 truncated       true
 ```
 
-旧版的裸字符串 `retrieval_context` 和 `tool_results` 为了兼容历史调用，仍可以
-使用文本裁剪。因此新代码应优先传结构化 `evidence_items` 和 `tool_result_refs`。
+旧版的裸字符串 `retrieval_context` 和 `tool_results` 仍保留兼容入口，但新工具链不再
+把完整工具原文直接传给模型。应优先传结构化 `evidence_items` 和 `tool_result_refs`。
+
+### 6.4 工具结果的生命周期
+
+工具完整结果保存到 `conversation_tool_results`，当前 Pack 只保留：
+
+```text
+summary + source_ids + result_ref
+```
+
+工具结果不默认调用 LLM 摘要。工具执行层先做确定性结构化投影；只有长文档总结等
+确实需要语义压缩的场景才调用 LLM。回答完成后会标记 `used_in_answer` 和
+`citation_used`，后续压缩优先淘汰已回答、较旧、可重新获取的结果。完整结果仍可通过
+`result_ref` 恢复，不会因为 Pack 淘汰而丢失。
 
 ### 6.3 `persistent_memory` 当前是什么状态
 
@@ -444,39 +472,58 @@ conversation_memories             -> 少量明确的重要事实/决定/约束
 maybe_update_conversation_summary(conversation_id, session)
 ```
 
-当前默认条件：
+系统保留最近 4 条消息（约 2 轮）不放入摘要，让近期原文继续直接进入 ContextPack。窗口外、且
+`message.id > context_summary_through_message_id` 的消息才是“未摘要历史”。
+
+摘要采用“历史区域软水位”，而不是按整段会话的固定字符数触发：
 
 ```text
-整个会话内容达到 context_summary_trigger_chars = 12000 字符
-并且存在尚未摘要的新消息
-首次摘要：满足总长度即可
-后续摘要：新增内容至少达到 context_summary_min_new_chars = 3000 字符
+历史区域 = conversation_summary + recent_messages + relevant_history
+          + persistent_memory（长期记忆单独保存，但进入历史上下文预算）
+
+历史区域预算 = context_history_region_budget_tokens，默认 6000
+软水位：本次 Answer 可见历史区域的估算 Token 达到预算的 70%
+      -> 如果至少有 4 条、100 Token 的旧消息可压缩，
+         本轮回答保存后调用摘要 LLM，从最早的未摘要消息开始压缩
+      -> 一次尽量回落到历史区域预算的 60%，而不是只压一轮
+
+Pack 硬水位：当前节点 Pack 预计达到 max_tokens 的 95%
+      -> 执行完整维护，目标回落到约 75%
+
+最终硬边界：每个 ContextPack 的 max_tokens
+      -> 无论摘要是否成功，Pack 都按优先级裁剪，绝不超过节点预算
 ```
 
-系统保留最近 6 条消息不放入摘要，让近期原文继续直接进入 ContextPack。
+因此“历史区域软水位”和“Pack 硬水位”是两个不同层次：前者决定何时生成结构化摘要，
+后者决定本次 LLM 请求如何压缩候选上下文。`ContextPack.max_tokens` 才是 Router、Rewrite、
+Answer 调用模型前真正不可突破的上限。
+
+消息数量不再单独触发摘要。短消息即使累计很多，只要实际历史区域未到 70%，就继续使用
+滑动窗口和按需历史恢复；“至少 4 条”只表示本次压缩有足够收益。计算历史区域时只使用
+Answer 当前可见的最近 12 条未摘要原文，数据库中的完整历史仍然保留。
 
 ### 7.3 摘要游标为什么重要
 
-假设历史为：
+假设历史为 12 条消息（约 6 轮问答）：
 
 ```text
-M1 M2 M3 M4 M5 M6 M7 M8 M9 M10
+M1 M2 M3 M4 M5 M6 M7 M8 M9 M10 M11 M12
 ```
 
-系统每次保留最近 6 条消息，因此第一次摘要的输入可能是：
+系统保留最近 4 条消息（约 2 轮），因此第一次摘要的输入可能是：
 
 ```text
-M1 M2 M3 M4
+M1 M2 M3 M4 M5 M6 M7 M8
 ```
 
 正确的游标是：
 
 ```text
-context_summary_through_message_id = M4
+context_summary_through_message_id = M8
 ```
 
-不能错误地把游标写成 M10，因为 M5 到 M10 只是近期窗口，并没有进入摘要。否则
-下一次摘要会误以为 M5 到 M10 已经被总结过，造成历史事实丢失。
+不能错误地把游标写成 M12，因为 M9 到 M12 只是近期窗口，并没有进入摘要。否则
+下一次摘要会误以为 M9 到 M12 已经被总结过，造成历史事实丢失。
 
 ### 7.4 摘要失败怎么办
 
@@ -798,23 +845,25 @@ Answer 只能引用 `[1]`、`[2]`、`[3]`。被省略的 chunk 不会继续作�
 
 ### 11.4 摘要触发后的行为
 
-当对话累计超过 12000 字符时，保存助手消息后会尝试生成摘要：
+当窗口外未摘要历史跨过历史区域软水位时，保存助手消息后会尝试生成摘要。它是维护流程中的
+“压缩较早对话”步骤，不在 `build_context_pack()` 内临时调用 LLM，避免把摘要延迟叠加到当前回答：
 
 ```text
 messages 表完整保留
        |
-       +--> 最近 6 条继续作为原文窗口
+       +--> 最近 4 条继续作为原文窗口（约 2 轮）
        |
-       +--> 更早的新增消息交给 Router LLM 摘要
+       +--> 达到 70% 后，从最早的未摘要消息中动态选择一批
                   |
                   +--> JSON 写入 Conversation.context_summary
                   +--> 更新 context_summary_through_message_id
+                  +--> 历史区域尽量回落到约 60%
 ```
 
 下次请求时，Context Manager 同时使用：
 
 ```text
-结构化摘要 + 最近 6 条原文 + 必要时恢复的相关历史
+结构化摘要 + 最近 4 条原文 + 必要时恢复的相关历史
 ```
 
 所以不是“只剩摘要”，而是摘要、窗口和按需恢复三层组合。
@@ -976,7 +1025,7 @@ truncated
 
 ### 练习二：观察摘要游标
 
-构造 10 条消息，设置保留最近 6 条，检查摘要输入只覆盖前面的消息，并确认：
+构造 12 条较长消息，设置保留最近 4 条，检查摘要输入从最早消息开始动态选取，并确认：
 
 ```text
 context_summary_through_message_id

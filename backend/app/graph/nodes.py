@@ -25,6 +25,10 @@ from app.services import (
 )
 from app.services.context_gap_detector import detect_context_gap
 from app.services.context_types import ContextItem, RecoveryAction
+from app.services.tool_context_policy import (
+    build_tool_result_ref,
+    persist_tool_result,
+)
 
 START_NODE = "START"
 ROUTER_NODE = "router"
@@ -38,12 +42,10 @@ TOOL_CALL_NODE = "tool_call"
 RELEVANCE_CHECK_NODE = "relevance_check"
 REVIEW_NODE = "review"
 ANSWER_NODE = "answer"
-COMPLEX_NODE = "complex"
 END_NODE = "END"
 
 DIRECT_ROUTE = "direct"
 RAG_ROUTE = "rag"
-COMPLEX_ROUTE = "complex"
 TOOL_ROUTE = "tool"
 
 TOOL_INTENT_MARKERS = (
@@ -76,12 +78,6 @@ DIRECT_CONCEPT_PATTERNS = (
     r"^什么是\s*agent[？?]?$",
     r"^什么是\s*docker[？?]?$",
     r"^什么是\s*langgraph[？?]?$",
-)
-
-COMPLEX_PATTERNS = (
-    r"^(总结|总结一下|概括|归纳|梳理|整理|分析).*(知识库|文档|重点|内容)",
-    r"^(对比|比较).*(知识库|文档|制度|方案)",
-    r"^(请)?总结这个知识库的重点",
 )
 
 def router_node(state: GraphState) -> GraphState:
@@ -227,6 +223,14 @@ def history_recovery_node(state: GraphState, session: Session) -> GraphState:
 
     result_payload = _model_dump(result)
     updated_state["history_tool_results"] = [result_payload]
+    history_ref = persist_tool_result(
+        result=result,
+        organization_id=int(state.get("organization_id") or 0),
+        conversation_id=(int(state.get("conversation_id")) if state.get("conversation_id") else None),
+        thread_id=str(state.get("thread_id") or ""),
+        session=session,
+    )
+    updated_state["tool_result_refs"] = list(state.get("tool_result_refs") or []) + [history_ref.to_dict()]
     updated_state["history_recovery_used"] = True
     updated_state["tool_call_count"] = int(state.get("tool_call_count") or 0) + 1
 
@@ -299,30 +303,6 @@ def direct_answer_node(state: GraphState) -> GraphState:
     updated_state["relevance_decision"] = "direct"
     updated_state["review_reason"] = ""
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [DIRECT_NODE, END_NODE])
-    return updated_state
-
-
-def complex_answer_node(state: GraphState) -> GraphState:
-    """complex 分支先占位，后面再扩成多步 workflow。"""
-
-    question = str(state.get("question") or "").strip()
-    if not question:
-        raise ValueError("question must not be empty")
-
-    updated_state = dict(state)
-    updated_state["answer"] = (
-        "这是一个 complex 问题，当前会先识别出来，但还没有进入多轮检索 / 总结工作流。"
-        "后续可以继续扩成 retrieve -> rerank -> summarize。"
-    )
-    updated_state["retrieved_docs"] = []
-    updated_state["context"] = ""
-    updated_state["docs_preview"] = ""
-    updated_state["citations"] = []
-    updated_state["answer_used_fallback"] = False
-    updated_state["need_human_review"] = False
-    updated_state["relevance_decision"] = "complex"
-    updated_state["review_reason"] = ""
-    updated_state["node_trace"] = append_trace(state.get("node_trace"), [COMPLEX_NODE, END_NODE])
     return updated_state
 
 
@@ -513,6 +493,14 @@ def tool_call_node(state: GraphState, session: Session) -> GraphState:
         updated_state["tool_call_count"] = call_count + 1
 
     updated_state["tool_results"] = [result.model_dump() if hasattr(result, "model_dump") else result.dict()]
+    tool_ref = persist_tool_result(
+        result=result,
+        organization_id=organization_id,
+        conversation_id=(int(state.get("conversation_id")) if state.get("conversation_id") else None),
+        thread_id=str(state.get("thread_id") or ""),
+        session=session,
+    )
+    updated_state["tool_result_refs"] = list(state.get("tool_result_refs") or []) + [tool_ref.to_dict()]
     updated_state["tool_citations"] = list(result.citations)
     updated_state["tool_error"] = str(result.error_message or "") if not result.ok else ""
     updated_state["node_trace"] = append_trace(
@@ -540,7 +528,8 @@ def answer_node(state: GraphState) -> GraphState:
     answer_context = context_manager.build_answer_context(
         recent_context=dict(state.get("answer_context") or {}),
         retrieved_documents=retrieved_docs,
-        tool_results=_tool_result_context_texts(state),
+        tool_results=[],
+        tool_result_refs=_tool_result_context_refs(state),
         relevant_history=list(state.get("relevant_history") or []),
         recovery_actions=list(state.get("context_recovery_actions") or []),
     )
@@ -566,6 +555,11 @@ def answer_node(state: GraphState) -> GraphState:
         list(state.get("tool_citations") or []),
     )
     updated_state["answer_used_fallback"] = result.used_fallback
+    updated_state["used_tool_result_refs"] = [
+        str(item.get("result_ref"))
+        for item in list(updated_state.get("tool_result_refs") or [])
+        if isinstance(item, dict) and item.get("result_ref")
+    ]
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [ANSWER_NODE, END_NODE])
     return updated_state
 
@@ -598,6 +592,24 @@ def _tool_result_context_texts(state: GraphState) -> list[str]:
         except Exception:
             continue
     return texts
+
+
+def _tool_result_context_refs(state: GraphState) -> list[dict]:
+    """优先返回工具的结构化引用；旧 checkpoint 才回退到兼容转换。"""
+
+    refs = list(state.get("tool_result_refs") or [])
+    if refs:
+        return refs
+    converted = []
+    for raw_result in list(state.get("history_tool_results") or []) + list(state.get("tool_results") or []):
+        if not isinstance(raw_result, dict):
+            continue
+        try:
+            result = ToolExecutionResult(**raw_result)
+            converted.append(build_tool_result_ref(result).to_dict())
+        except Exception:
+            continue
+    return converted
 
 
 def merge_citations(*citation_groups: list[dict]) -> list[dict]:
@@ -756,7 +768,7 @@ def route_question(
     - 你好 -> direct
     - 什么是 RAG -> direct
     - 公司制度怎么报销 -> rag
-    - 总结这个知识库的重点 -> complex
+    - 总结这个知识库的重点 -> rag（当前复用已有检索链路）
     """
 
     normalized = normalize_question(question)
@@ -769,11 +781,6 @@ def route_question(
     if any(marker in normalized for marker in ("有哪些文档", "文档列表", "所有文档", "文件列表")):
         if knowledge_base_id is not None:
             return (TOOL_ROUTE, "问题要求查询知识库文档列表")
-
-    if is_complex_question(normalized):
-        if knowledge_base_id is None:
-            return (DIRECT_ROUTE, "complex question without knowledge base id")
-        return (COMPLEX_ROUTE, "matched complex rule")
 
     if knowledge_base_id is None:
         return (DIRECT_ROUTE, "no knowledge base id provided")
@@ -886,13 +893,6 @@ def is_direct_question(normalized_question: str) -> bool:
         if re.match(pattern, normalized_question):
             return True
 
-    return False
-
-
-def is_complex_question(normalized_question: str) -> bool:
-    for pattern in COMPLEX_PATTERNS:
-        if re.match(pattern, normalized_question):
-            return True
     return False
 
 

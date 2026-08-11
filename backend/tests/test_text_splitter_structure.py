@@ -1142,6 +1142,27 @@ B内容。
             first_body_line = body.split("\n\n", 1)[0]
             self.assertIn(first_body_line, expected_body_starts)
 
+    def test_independent_blocks_do_not_receive_semantic_overlap(self) -> None:
+        markdown_text = """# 标题
+
+第一段是一个完整的独立段落，描述报销申请的提交规则。
+
+第二段是另一个完整的独立段落，描述审批完成后的归档规则。
+"""
+
+        chunks = split_document_text(
+            markdown_text,
+            "md",
+            target_chunk_size=20,
+            max_chunk_size=100,
+            chunk_overlap=20,
+        )
+
+        self.assertEqual(len(chunks), 2)
+        self.assertIn("第一段是一个完整的独立段落", chunks[0].content)
+        self.assertIn("第二段是另一个完整的独立段落", chunks[1].content)
+        self.assertNotIn("第一段是一个完整的独立段落", chunks[1].content)
+
     def test_markdown_table_chunks_do_not_start_from_middle_row(self) -> None:
         markdown_text = """# 表格节
 

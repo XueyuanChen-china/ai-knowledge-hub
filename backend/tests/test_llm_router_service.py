@@ -13,7 +13,7 @@ class LlmRouterServiceTests(unittest.TestCase):
     def test_normalize_route(self) -> None:
         self.assertEqual(llm_router_service.normalize_route(" direct "), "direct")
         self.assertEqual(llm_router_service.normalize_route("RAG"), "rag")
-        self.assertEqual(llm_router_service.normalize_route("Complex"), "complex")
+        self.assertEqual(llm_router_service.normalize_route("Complex"), "rag")
         self.assertEqual(llm_router_service.normalize_route("tool"), "tool")
         self.assertIsNone(llm_router_service.normalize_route("unknown"))
 
@@ -23,7 +23,7 @@ class LlmRouterServiceTests(unittest.TestCase):
         )
         self.assertIsNotNone(decision)
         assert decision is not None
-        self.assertEqual(decision.route, "complex")
+        self.assertEqual(decision.route, "rag")
         self.assertEqual(decision.reason, "需要总结整个知识库")
 
     def test_parse_router_output_from_plain_text(self) -> None:

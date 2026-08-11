@@ -15,7 +15,7 @@
 
 ```text
 用户问题
-  -> Router 判断 direct / rag / complex
+  -> Router 判断 direct / rag / tool
   -> RAG 路线进入 query_rewrite
   -> 规则判断是否需要改写
   -> 必要时调用 Qwen 生成 1~3 个补充查询

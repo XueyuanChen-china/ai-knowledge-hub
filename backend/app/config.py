@@ -152,8 +152,10 @@ class Settings(BaseSettings):
     context_rewrite_max_tokens: int = 1600
     context_answer_max_tokens: int = 6000
     context_message_max_chars: int = 1200
-    context_rewrite_recent_messages: int = 6
-    context_answer_recent_messages: int = 6
+    # 1 轮通常包含 user + assistant 两条消息。Answer 最多看 6 轮，
+    # Router / Rewrite 使用更小的视图，避免每个节点都携带完整历史。
+    context_rewrite_recent_messages: int = 8
+    context_answer_recent_messages: int = 12
     context_router_summary_max_tokens: int = 120
     context_rewrite_summary_max_tokens: int = 250
     context_answer_summary_max_tokens: int = 500
@@ -166,11 +168,26 @@ class Settings(BaseSettings):
     context_rewrite_memory_max_tokens: int = 300
     context_answer_memory_max_tokens: int = 800
     context_system_max_tokens: int = 180
-    context_pinned_max_tokens: int = 240
-    context_summary_trigger_chars: int = 12000
-    context_summary_min_new_chars: int = 3000
+    # 历史区域预算：用于判断 Answer 当前可见历史是否需要进入摘要压缩。
+    # 它不是整个 Answer Pack 的预算；整个 Pack 的硬水位单独按 max_tokens * 0.95 计算。
+    context_history_region_budget_tokens: int = 6000
+    # 旧配置名保留兼容已有 .env 和测试，代码优先使用 context_history_region_budget_tokens。
+    context_summary_soft_watermark_ratio: float = 0.70
+    # 旧配置名保留兼容，后续可移除；不再作为 Pack 硬水位。
+    context_summary_hard_watermark_tokens: int = 6000
     context_summary_max_tokens: int = 500
-    context_summary_keep_recent_messages: int = 6
+    context_summary_keep_recent_messages: int = 4
+    # 软水位只负责触发维护；摘要完成后尽量回落到 60%，形成滞回区间。
+    context_summary_target_ratio: float = 0.60
+    # 消息数量只是压缩资格，不再单独触发摘要。至少两轮、且有一定 Token 收益才执行。
+    context_summary_min_compactable_messages: int = 4
+    context_summary_min_compactable_tokens: int = 100
+    context_summary_max_batch_messages: int = 12
+    context_pack_hard_watermark_ratio: float = 0.95
+    context_pack_target_ratio: float = 0.75
+    context_relevant_history_compacted_limit: int = 3
+    context_relevant_history_emergency_limit: int = 1
+    context_minimum_evidence_items: int = 2
 
     # 只读 Agent 工具的资源和结果边界。工具结果仍会经过 Context Manager 再进入 LLM。
     agent_tool_max_document_chars: int = 24000

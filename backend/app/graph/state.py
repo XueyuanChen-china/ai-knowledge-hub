@@ -33,6 +33,8 @@ class GraphState(TypedDict, total=False):
     rewrite_reason: str
     tool_call: dict
     tool_results: list[dict]
+    tool_result_refs: list[dict]
+    used_tool_result_refs: list[str]
     tool_citations: list[dict]
     tool_error: str
     tool_used: bool

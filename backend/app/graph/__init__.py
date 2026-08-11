@@ -2,7 +2,6 @@
 
 from app.graph.nodes import (
     ANSWER_NODE,
-    COMPLEX_ROUTE,
     DIRECT_ROUTE,
     RAG_ROUTE,
     TOOL_ROUTE,
@@ -14,7 +13,6 @@ from app.graph.workflow import BasicGraphWorkflow, build_basic_workflow
 __all__ = [
     "BasicGraphWorkflow",
     "ANSWER_NODE",
-    "COMPLEX_ROUTE",
     "DIRECT_ROUTE",
     "GraphState",
     "RAG_ROUTE",

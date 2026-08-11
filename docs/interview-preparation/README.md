@@ -38,7 +38,7 @@ React + Vite + TypeScript + Mantine
 3. **异步处理**：上传完成只创建数据库任务并投递 Celery，各阶段按依赖串行，不同文件之间形成流水线并发。
 4. **文档理解**：不同 parser 先生成统一 `DocumentElement`，再构建 `Section`、`Block` 和 `ChunkData`，尽量保留标题、列表、表格、代码块和页码。
 5. **检索**：Dense 处理语义改写，BM25 处理精确词，RRF 融合不可直接比较的两类分数，reranker 再对 query 与候选 chunk 做精排。
-6. **Agent**：Router 区分 direct、rag、complex、tool；RAG 路线支持 query rewrite、证据门禁、只读工具和 human-in-the-loop。
+6. **Agent**：Router 区分 direct、rag、tool；复杂总结暂时复用 RAG，RAG 路线支持 query rewrite、证据门禁、只读工具和 human-in-the-loop。
 7. **企业边界**：所有资源带 `organization_id`，PostgreSQL 查询和 Elasticsearch 召回都先过滤权限；OSS key 由后端生成。
 8. **工程能力**：Alembic 管理 schema，PostgreSQL 持久化 checkpoint，Redis 撤销 JWT，Docker Compose 和 CI 提供可重复交付，JSON 日志、request ID、metrics 和 readiness 用于定位问题。
 

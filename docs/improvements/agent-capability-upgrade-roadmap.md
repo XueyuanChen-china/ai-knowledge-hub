@@ -196,7 +196,7 @@ list_knowledge_base_documents
 ```text
 用户问题
   -> Router
-  -> direct / rag / tool / complex
+  -> direct / rag / tool
   -> Qwen 原生 tool_calls
   -> 后端校验参数和权限
   -> 执行工具

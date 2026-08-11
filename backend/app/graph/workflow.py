@@ -3,12 +3,10 @@ from dataclasses import dataclass
 from sqlmodel import Session
 
 from app.graph.nodes import (
-    COMPLEX_ROUTE,
     DIRECT_ROUTE,
     RAG_ROUTE,
     TOOL_ROUTE,
     answer_node,
-    complex_answer_node,
     context_gap_check_node,
     direct_answer_node,
     history_recovery_node,
@@ -31,7 +29,7 @@ class BasicGraphWorkflow:
 
     START -> router -> direct
                     -> rag -> retrieve -> relevance_check -> answer/review
-                    -> complex
+                    -> tool -> tool_call -> answer/review
 
     这一版先不引入更重的图框架依赖，把状态和节点边界先固定住。
     后面如果切到 LangGraph，也可以直接复用：
@@ -78,9 +76,6 @@ class BasicGraphWorkflow:
             if tool_state.get("tool_error"):
                 return review_required_node(tool_state)
             return answer_node(tool_state)
-
-        if route == COMPLEX_ROUTE:
-            return complex_answer_node(routed_state)
 
         raise ValueError(f"unsupported route: {route}")
 

@@ -6,7 +6,7 @@
 
 ```text
 给定 question + knowledge_base_id
-  -> Router 判断走 direct / rag / complex
+  -> Router 判断走 direct / rag / tool
 ```
 
 也就是说，这一版默认：
@@ -18,7 +18,7 @@
 
 - 系统自己在多个知识库之间选库
 - Router 返回更稳定的结构化结果
-- `complex` 分支的多步检索与总结
+- 复杂问题暂时复用 RAG，多文档总结分支留作后续独立升级
 
 所以后续升级要拆层做，而不是把所有能力一次塞进 Day 16。
 
@@ -30,7 +30,7 @@
 
 ```text
 question
-  -> route = direct / rag / complex
+  -> route = direct / rag / tool
 ```
 
 它不是：
@@ -119,7 +119,7 @@ question
 
 应用端仍然要做校验：
 
-- `route` 是否在 `direct / rag / complex` 里
+- `route` 是否在 `direct / rag / tool` 里
 - `reason` 是否为空
 - `confidence` 是否在 `0~1`
 
@@ -153,7 +153,7 @@ question
   -> kb_selector
       选择最相关 knowledge_base
   -> router
-      判断 direct / rag / complex
+      判断 direct / rag / tool
 ```
 
 `kb_selector` 的输入不应该是完整文档，而应该是知识库目录信息：
@@ -196,31 +196,20 @@ question
 
 ---
 
-### Phase D：把 `complex` 扩成多步流
+### Phase D：复杂问题多步流（后续独立升级）
 
-目标：
+当前不实现独立的 `complex` 路由。复杂总结、归纳和对比问题统一进入 RAG，避免保留一个无法生成答案的占位分支。
 
-- `complex` 不再只是占位分支
-- 真正进入多步流程
-
-推荐最小链路：
+后续如果重新启动这项升级，再单独设计：
 
 ```text
-complex
+子问题拆解
   -> retrieve multiple docs
   -> rerank / group
   -> summarize
   -> answer with citations
 ```
 
-这一步需要新字段：
-
-- `selected_kb_id`
-- `retrieval_plan`
-- `retrieved_doc_groups`
-- `summary_outline`
-
-这一步做完后，`complex` 才算真正可用。
 
 ---
 
@@ -234,7 +223,7 @@ complex
 建议边界：
 
 - Router：
-  - `direct / rag / complex`
+  - `direct / rag / tool`
 - Tool Calling：
   - `search_knowledge_base`
   - `get_document_by_id`
@@ -259,7 +248,7 @@ router 先判断路线
 1. Phase A：给 Router 补 knowledge base 摘要信息
 2. Phase B：改成结构化输出 + 应用端校验
 3. Phase C：实现 `kb_selector`
-4. Phase D：扩 `complex` 多步流
+4. 后续再评估复杂问题多步总结流
 5. Phase E：把工具调用体系接进来
 
 原因：

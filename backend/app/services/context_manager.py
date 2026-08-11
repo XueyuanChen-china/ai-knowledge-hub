@@ -13,7 +13,7 @@ from typing import Any, Iterable, List, Optional, Tuple
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.db.models import Conversation, Message
+from app.db.models import Conversation, ConversationMemory, Message
 from app.observability.metrics import get_metrics
 from app.services.context_budget import ContextBudget, estimate_tokens
 from app.services.context_types import (
@@ -25,6 +25,7 @@ from app.services.context_types import (
     StructuredSummary,
     ToolResultRef,
 )
+from app.services.tool_context_policy import compact_tool_refs, dedupe_tool_refs
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,6 @@ class ContextPack:
     estimated_tokens: int
     truncated: bool
     system_instructions: List[str] = field(default_factory=list)
-    pinned_constraints: List[ContextItem] = field(default_factory=list)
     persistent_memory: List[ContextItem] = field(default_factory=list)
     conversation_summary: Optional[StructuredSummary] = None
     relevant_history: List[ContextItem] = field(default_factory=list)
@@ -53,6 +53,7 @@ class ContextPack:
     omitted_items: List[OmittedItem] = field(default_factory=list)
     recovery_actions: List[RecoveryAction] = field(default_factory=list)
     current_question: str = ""
+    compaction_actions: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """转换成可写入 LangGraph checkpoint 的 JSON 兼容字典。"""
@@ -68,7 +69,6 @@ class ContextPack:
             "truncated": self.truncated,
             # 新的结构化表示。
             "system_instructions": list(self.system_instructions),
-            "pinned_constraints": [item.to_dict() for item in self.pinned_constraints],
             "persistent_memory": [item.to_dict() for item in self.persistent_memory],
             "conversation_summary": (
                 self.conversation_summary.to_dict()
@@ -82,6 +82,7 @@ class ContextPack:
             "omitted_items": [item.to_dict() for item in self.omitted_items],
             "recovery_actions": [item.to_dict() for item in self.recovery_actions],
             "current_question": self.current_question,
+            "compaction_actions": list(self.compaction_actions),
         }
 
 
@@ -130,6 +131,107 @@ def parse_structured_summary(value: Any) -> Optional[StructuredSummary]:
     return StructuredSummary.from_dict(parsed) or StructuredSummary.from_legacy_text(text)
 
 
+def messages_after_summary_cursor(
+    messages: list[Any],
+    summary_through_message_id: Optional[int],
+) -> list[Any]:
+    """过滤已经被结构化摘要覆盖的消息，避免摘要和原文重复进入 Pack。"""
+
+    cursor = int(summary_through_message_id or 0)
+    if cursor <= 0:
+        return list(messages)
+    return [
+        message
+        for message in messages
+        if getattr(message, "id", None) is None
+        or int(getattr(message, "id", 0) or 0) > cursor
+    ]
+
+
+def estimate_history_region_tokens(
+    *,
+    messages: list[Any],
+    summary: Any = "",
+    persistent_memory: Optional[list[Any]] = None,
+    relevant_history: Optional[list[Any]] = None,
+    summary_through_message_id: Optional[int] = None,
+    max_message_chars: int = 0,
+    max_summary_tokens: int = 0,
+    max_persistent_memory_tokens: int = 0,
+    max_relevant_history_tokens: int = 0,
+) -> int:
+    """估算历史区域实际用量，不包含检索证据、工具结果和系统指令。"""
+
+    active_messages = messages_after_summary_cursor(
+        messages,
+        summary_through_message_id,
+    )
+    structured_summary = parse_structured_summary(summary)
+    summary_text = (
+        structured_summary.to_prompt_text()
+        if structured_summary
+        else str(summary or "")
+    )
+    summary_tokens = estimate_tokens(summary_text)
+    memory_tokens = sum(
+        estimate_tokens(item.content)
+        for item in _coerce_context_items(persistent_memory, "persistent_memory")
+    )
+    history_tokens = sum(
+        estimate_tokens(item.content)
+        for item in _coerce_context_items(relevant_history, "relevant_history")
+    )
+    return (
+        _limit_tokens(summary_tokens, max_summary_tokens)
+        + sum(
+            estimate_tokens(
+                normalize_message(message, max(0, max_message_chars))["content"]
+            )
+            for message in active_messages
+        )
+        + _limit_tokens(memory_tokens, max_persistent_memory_tokens)
+        + _limit_tokens(history_tokens, max_relevant_history_tokens)
+    )
+
+
+def _limit_tokens(token_count: int, limit: int) -> int:
+    return min(token_count, limit) if limit > 0 else token_count
+
+
+def select_summary_batch(
+    *,
+    messages: list[Message],
+    keep_recent_messages: int,
+    current_history_tokens: int,
+    history_budget_tokens: int,
+    target_ratio: float,
+    max_summary_tokens: int,
+    min_messages: int,
+    max_messages: int,
+) -> list[Message]:
+    """选择最早的一批消息，摘要后尽量让历史区域回落到目标水位。"""
+
+    keep_recent = max(0, keep_recent_messages)
+    compactable = messages[:-keep_recent] if keep_recent else list(messages)
+    if len(compactable) < max(1, min_messages):
+        return []
+
+    target_tokens = max(1, int(history_budget_tokens * target_ratio))
+    # 摘要会新增一小段文本，因此预留最多 max_summary_tokens，避免刚压缩完仍贴着软水位。
+    tokens_to_remove = max(
+        1,
+        current_history_tokens - target_tokens + max(0, max_summary_tokens),
+    )
+    selected: list[Message] = []
+    removed_tokens = 0
+    for message in compactable[: max(1, max_messages)]:
+        selected.append(message)
+        removed_tokens += estimate_tokens(str(message.content or ""))
+        if len(selected) >= min_messages and removed_tokens >= tokens_to_remove:
+            break
+    return selected
+
+
 def _coerce_context_items(raw_items: Any, kind: str) -> list[ContextItem]:
     items: list[ContextItem] = []
     for index, raw in enumerate(raw_items or []):
@@ -150,6 +252,22 @@ def _coerce_context_items(raw_items: Any, kind: str) -> list[ContextItem]:
                     importance=float(raw.get("importance") or raw.get("score") or 0.0),
                     pinned=bool(raw.get("pinned") or False),
                     metadata=dict(raw.get("metadata") or {}),
+                )
+            )
+            continue
+        object_content = str(getattr(raw, "content", "") or "").strip()
+        if object_content:
+            source_id = getattr(raw, "id", None) or getattr(
+                raw,
+                "source_message_id",
+                None,
+            )
+            items.append(
+                ContextItem(
+                    kind=str(getattr(raw, "memory_type", "") or kind),
+                    content=object_content,
+                    source_ids=[str(source_id)] if source_id is not None else [],
+                    importance=float(getattr(raw, "importance", 0.0) or 0.0),
                 )
             )
             continue
@@ -215,7 +333,6 @@ def build_context_pack(
     tool_results: Optional[list[str]] = None,
     current_question: str = "",
     system_instructions: Optional[list[str]] = None,
-    pinned_constraints: Optional[list[Any]] = None,
     persistent_memory: Optional[list[Any]] = None,
     relevant_history: Optional[list[Any]] = None,
     evidence_items: Optional[list[EvidenceItem]] = None,
@@ -230,11 +347,102 @@ def build_context_pack(
 
     budget = ContextBudget.for_purpose(purpose)
     omitted: list[OmittedItem] = []
+    compaction_actions: list[str] = []
     truncated = False
     remaining = budget.max_tokens
     breakdown = BudgetBreakdown(total=budget.max_tokens)
 
-    # 系统指令和 pinned constraint 是最优先的，但当前节点通常由自己的 prompt 提供。
+    # 先做一次廉价的压力预检。最终选择仍由各分区预算控制，但在 Pack 已经
+    # 接近硬水位时要先淘汰可重新获取的工具结果和低价值历史，避免每轮只裁一点。
+    active_history = _coerce_context_items(relevant_history, "relevant_history")
+    active_evidence = list(evidence_items or [])
+    active_tool_refs = _tool_refs_from_dict(tool_result_refs)
+    active_memory = _coerce_context_items(persistent_memory, "persistent_memory")
+    candidate_messages = list(messages or [])[-max(1, budget.max_recent_messages) :]
+    structured_summary = parse_structured_summary(summary)
+    summary_for_estimate = (
+        structured_summary.to_prompt_text()
+        if structured_summary is not None
+        else str(summary or "")
+    )
+    fixed_rough_tokens = (
+        sum(
+            estimate_tokens(normalize_message(item, budget.max_message_chars)["content"])
+            for item in candidate_messages
+        )
+        + _limit_tokens(estimate_tokens(summary_for_estimate), budget.max_summary_tokens)
+        + _limit_tokens(
+            sum(estimate_tokens(item.content) for item in active_memory),
+            budget.max_persistent_memory_tokens,
+        )
+        + _limit_tokens(
+            sum(estimate_tokens(str(item)) for item in system_instructions or []),
+            budget.max_system_tokens,
+        )
+        + estimate_tokens(current_question)
+    )
+    rough_tokens = (
+        fixed_rough_tokens
+        + _limit_tokens(
+            sum(estimate_tokens(item.content) for item in active_history),
+            budget.max_history_tokens,
+        )
+        + _limit_tokens(
+            sum(estimate_tokens(_format_evidence(item)) for item in active_evidence),
+            budget.max_retrieval_tokens,
+        )
+        + _limit_tokens(
+            sum(estimate_tokens(ref.summary or ref.content) for ref in active_tool_refs),
+            budget.max_tool_tokens,
+        )
+    )
+    hard_watermark = int(
+        budget.max_tokens * getattr(get_settings(), "context_pack_hard_watermark_ratio", 0.95)
+    )
+    if rough_tokens >= hard_watermark:
+        compaction_actions.append("hard_watermark_preflight")
+        # 工具结果可重取，先只保留最新且重要的少量引用。
+        active_tool_refs, removed_refs = compact_tool_refs(active_tool_refs, max_items=3)
+        if removed_refs:
+            compaction_actions.append("evict_old_tool_results")
+        # 历史恢复结果是辅助信号，先降低数量，不影响最近消息和摘要。
+        active_history = sorted(
+            active_history,
+            key=lambda item: -float(item.importance or 0.0),
+        )[: max(1, get_settings().context_relevant_history_compacted_limit)]
+        compaction_actions.append("reduce_relevant_history")
+        # 正常检索顺序不变；只有硬水位时才按精排分数保留高价值证据。
+        active_evidence = sorted(
+            active_evidence,
+            key=lambda item: -float(item.score or 0.0),
+        )
+        compaction_actions.append("rank_evidence_for_budget")
+        target_watermark = int(
+            budget.max_tokens * getattr(get_settings(), "context_pack_target_ratio", 0.75)
+        )
+        post_compaction_estimate = (
+            fixed_rough_tokens
+            + _limit_tokens(
+                sum(estimate_tokens(item.content) for item in active_history),
+                budget.max_history_tokens,
+            )
+            + _limit_tokens(
+                sum(estimate_tokens(_format_evidence(item)) for item in active_evidence),
+                budget.max_retrieval_tokens,
+            )
+            + _limit_tokens(
+                sum(estimate_tokens(ref.summary or ref.content) for ref in active_tool_refs),
+                budget.max_tool_tokens,
+            )
+        )
+        if post_compaction_estimate > target_watermark:
+            active_history = active_history[: max(1, get_settings().context_relevant_history_emergency_limit)]
+            active_tool_refs, _ = compact_tool_refs(active_tool_refs, max_items=1)
+            if len(active_evidence) > get_settings().context_minimum_evidence_items:
+                active_evidence = active_evidence[: get_settings().context_minimum_evidence_items]
+            compaction_actions.append("emergency_reduce_context_candidates")
+
+    # 系统指令优先保留；长期且已确认的业务事实由 persistent_memory 承载。
     selected_system: list[str] = []
     for instruction in system_instructions or []:
         clipped, was_truncated = clip_text(str(instruction), budget.max_system_tokens)
@@ -245,15 +453,15 @@ def build_context_pack(
             breakdown.system_instructions += tokens
         truncated = truncated or was_truncated
 
-    selected_pinned, pinned_tokens, pinned_truncated = _select_atomic(
-        _coerce_context_items(pinned_constraints, "pinned_constraint"),
-        kind="pinned_constraint",
-        remaining=min(remaining, budget.max_pinned_tokens),
+    selected_memory, memory_tokens, memory_truncated = _select_atomic(
+        active_memory,
+        kind="persistent_memory",
+        remaining=min(remaining, budget.max_persistent_memory_tokens),
         omitted=omitted,
     )
-    breakdown.pinned_constraints = pinned_tokens
-    remaining -= breakdown.pinned_constraints
-    truncated = truncated or pinned_truncated
+    breakdown.persistent_memory = memory_tokens
+    remaining -= breakdown.persistent_memory
+    truncated = truncated or memory_truncated
 
     structured_summary = parse_structured_summary(summary)
     summary_text = structured_summary.to_prompt_text() if structured_summary else ""
@@ -263,16 +471,6 @@ def build_context_pack(
     breakdown.summary = estimate_tokens(summary_text)
     remaining -= breakdown.summary
     truncated = truncated or summary_truncated
-
-    selected_memory, memory_tokens, memory_truncated = _select_atomic(
-        _coerce_context_items(persistent_memory, "persistent_memory"),
-        kind="persistent_memory",
-        remaining=min(remaining, budget.max_persistent_memory_tokens),
-        omitted=omitted,
-    )
-    breakdown.persistent_memory = memory_tokens
-    remaining -= breakdown.persistent_memory
-    truncated = truncated or memory_truncated
 
     selected_messages: list[dict[str, str]] = []
     # 从最新消息向前选取，最后再恢复时间顺序。
@@ -300,7 +498,7 @@ def build_context_pack(
     selected_messages.reverse()
 
     selected_history, history_tokens, history_truncated = _select_atomic(
-        _coerce_context_items(relevant_history, "relevant_history"),
+        active_history,
         kind="relevant_history",
         remaining=min(remaining, budget.max_history_tokens),
         omitted=omitted,
@@ -310,8 +508,8 @@ def build_context_pack(
     truncated = truncated or history_truncated
 
     selected_evidence: list[EvidenceItem] = []
-    if evidence_items:
-        for item in evidence_items:
+    if active_evidence:
+        for item in active_evidence:
             rendered = _format_evidence(item)
             tokens = estimate_tokens(rendered)
             if tokens <= min(remaining, budget.max_retrieval_tokens):
@@ -343,14 +541,29 @@ def build_context_pack(
     normalized_tools: list[str] = []
     selected_tool_refs: list[ToolResultRef] = []
     if tool_result_refs:
+        normalized_refs = dedupe_tool_refs(active_tool_refs)
+        # 工具结果是可重新获取的临时上下文，超过基础数量时先淘汰旧结果。
+        normalized_refs, removed_refs = compact_tool_refs(normalized_refs, max_items=8)
+        if removed_refs:
+            compaction_actions.append("evict_old_tool_results")
+            omitted.extend(
+                OmittedItem(
+                    kind="tool_result",
+                    source_id=ref.result_ref or ref.tool_name,
+                    reason="old_or_duplicate_tool_result_evicted",
+                    estimated_tokens=estimate_tokens(ref.summary or ref.content),
+                )
+                for ref in removed_refs
+            )
         tool_items = [
             ContextItem(
                 kind="tool_result",
                 content=(ref.summary or ref.content),
-                source_ids=[ref.tool_name],
+                source_ids=[ref.result_ref or ref.tool_name],
                 importance=1.0,
+                pinned=ref.importance == "pinned" or ref.citation_used,
             )
-            for ref in tool_result_refs
+            for ref in normalized_refs
         ]
         selected_tool_items, tool_item_tokens, tools_truncated = _select_atomic(
             tool_items,
@@ -359,7 +572,10 @@ def build_context_pack(
             omitted=omitted,
         )
         selected_names = {item.source_ids[0] for item in selected_tool_items if item.source_ids}
-        selected_tool_refs = [ref for ref in tool_result_refs if ref.tool_name in selected_names]
+        selected_tool_refs = [
+            ref for ref in normalized_refs
+            if (ref.result_ref or ref.tool_name) in selected_names
+        ]
         normalized_tools = [ref.summary or ref.content for ref in selected_tool_refs]
         breakdown.tools = sum(estimate_tokens(item) for item in normalized_tools)
         remaining -= breakdown.tools
@@ -384,7 +600,6 @@ def build_context_pack(
     breakdown.remaining = max(0, remaining)
     estimated = (
         breakdown.system_instructions
-        + breakdown.pinned_constraints
         + breakdown.summary
         + breakdown.recent_messages
         + breakdown.persistent_memory
@@ -406,7 +621,6 @@ def build_context_pack(
         estimated_tokens=estimated,
         truncated=truncated,
         system_instructions=selected_system,
-        pinned_constraints=selected_pinned,
         persistent_memory=selected_memory,
         conversation_summary=structured_summary,
         relevant_history=selected_history,
@@ -416,6 +630,7 @@ def build_context_pack(
         omitted_items=omitted,
         recovery_actions=_coerce_recovery_actions(recovery_actions),
         current_question=str(current_question or ""),
+        compaction_actions=compaction_actions,
     )
 
 
@@ -426,15 +641,18 @@ def build_conversation_contexts(
     persistent_memory: Optional[list[Any]] = None,
     relevant_history: Optional[list[Any]] = None,
     recovery_actions: Optional[list[RecoveryAction]] = None,
+    tool_result_refs: Optional[list[ToolResultRef]] = None,
+    summary_through_message_id: Optional[int] = None,
 ) -> dict[str, dict[str, Any]]:
     """为三个 LLM 节点生成隔离的 Context Pack。"""
 
     common = {
-        "messages": messages,
+        "messages": messages_after_summary_cursor(messages, summary_through_message_id),
         "summary": summary,
         "persistent_memory": persistent_memory,
         "relevant_history": relevant_history,
         "recovery_actions": recovery_actions,
+        "tool_result_refs": tool_result_refs,
     }
     router = build_context_pack(purpose="router", **common)
     rewrite = build_context_pack(purpose="rewrite", **common)
@@ -451,6 +669,7 @@ def build_answer_context(
     recent_context: Optional[dict[str, Any]],
     retrieved_documents: list[Any],
     tool_results: Optional[list[str]] = None,
+    tool_result_refs: Optional[list[ToolResultRef]] = None,
     relevant_history: Optional[list[Any]] = None,
     recovery_actions: Optional[list[RecoveryAction]] = None,
 ) -> dict[str, Any]:
@@ -478,6 +697,9 @@ def build_answer_context(
         summary=base.get("conversation_summary") or base.get("summary") or "",
         retrieval_context=str(base.get("retrieval_context") or ""),
         tool_results=resolved_tools,
+        tool_result_refs=_tool_refs_from_dict(
+            tool_result_refs if tool_result_refs is not None else base.get("tool_result_refs")
+        ),
         current_question=str(base.get("current_question") or ""),
         persistent_memory=list(base.get("persistent_memory") or []),
         relevant_history=resolved_history,
@@ -487,27 +709,76 @@ def build_answer_context(
     return pack.to_dict()
 
 
-def should_refresh_summary(messages: list[Message], conversation: Conversation) -> bool:
-    """判断历史是否足够长，且是否出现了新的消息需要摘要。"""
+def get_summary_refresh_reason(
+    messages: list[Message],
+    conversation: Conversation,
+    *,
+    persistent_memory: Optional[list[Any]] = None,
+    relevant_history: Optional[list[Any]] = None,
+) -> str:
+    """返回会话摘要应刷新的原因，空字符串表示暂不需要刷新。
+
+    近期窗口始终保留原文，不参与摘要。本次 Answer 可见历史区域达到软水位，
+    且窗口外存在足够的未摘要消息时，才进入摘要压缩。
+    """
+
+    if not messages:
+        return ""
 
     settings = get_settings()
-    if not messages:
-        return False
-    latest_id = messages[-1].id
-    cursor = conversation.context_summary_through_message_id
-    if latest_id is None or latest_id == cursor:
-        return False
-    total_chars = sum(len(str(message.content or "")) for message in messages)
-    if total_chars < settings.context_summary_trigger_chars:
-        return False
-    if cursor is None:
-        return True
-    new_chars = sum(
-        len(str(message.content or ""))
-        for message in messages
-        if int(message.id or 0) > int(cursor)
+    cursor = int(conversation.context_summary_through_message_id or 0)
+    active_messages = messages_after_summary_cursor(messages, cursor)
+    keep_recent = max(0, settings.context_summary_keep_recent_messages)
+    compactable = active_messages[:-keep_recent] if keep_recent else active_messages
+    min_messages = max(1, settings.context_summary_min_compactable_messages)
+    if len(compactable) < min_messages:
+        return ""
+    compactable_tokens = sum(
+        estimate_tokens(str(message.content or "")) for message in compactable
     )
-    return new_chars >= settings.context_summary_min_new_chars
+    if compactable_tokens < max(1, settings.context_summary_min_compactable_tokens):
+        return ""
+
+    history_budget = int(
+        getattr(
+            settings,
+            "context_history_region_budget_tokens",
+            getattr(settings, "context_summary_hard_watermark_tokens", 6000),
+        )
+        or 6000
+    )
+    answer_window = active_messages[-max(1, settings.context_answer_recent_messages) :]
+    history_region_tokens = estimate_history_region_tokens(
+        messages=answer_window,
+        summary=getattr(conversation, "context_summary", ""),
+        persistent_memory=persistent_memory,
+        relevant_history=relevant_history,
+        max_message_chars=getattr(settings, "context_message_max_chars", 1200),
+        max_summary_tokens=getattr(settings, "context_answer_summary_max_tokens", 500),
+        max_persistent_memory_tokens=getattr(
+            settings,
+            "context_answer_memory_max_tokens",
+            800,
+        ),
+        max_relevant_history_tokens=getattr(
+            settings,
+            "context_answer_history_max_tokens",
+            1000,
+        ),
+    )
+    soft_watermark = max(
+        1,
+        int(history_budget * settings.context_summary_soft_watermark_ratio),
+    )
+    if history_region_tokens >= soft_watermark:
+        return "soft_watermark_history_region"
+    return ""
+
+
+def should_refresh_summary(messages: list[Message], conversation: Conversation) -> bool:
+    """判断可见历史是否跨过软水位且存在可压缩旧消息。"""
+
+    return bool(get_summary_refresh_reason(messages, conversation))
 
 
 def summarize_conversation_with_llm(
@@ -579,8 +850,13 @@ def summarize_conversation_with_llm(
     return summary
 
 
-def maybe_update_conversation_summary(conversation_id: int, session: Session) -> bool:
-    """超过阈值后尝试保存摘要；摘要失败不阻塞已经完成的答案。"""
+def maybe_update_conversation_summary(
+    conversation_id: int,
+    session: Session,
+    *,
+    relevant_history: Optional[list[Any]] = None,
+) -> bool:
+    """跨过摘要水位后尝试保存摘要；失败不阻塞已经完成的答案。"""
 
     conversation = session.get(Conversation, conversation_id)
     if conversation is None:
@@ -590,16 +866,45 @@ def maybe_update_conversation_summary(conversation_id: int, session: Session) ->
         .where(Message.conversation_id == conversation_id)
         .order_by(Message.created_at.asc(), Message.id.asc())
     ).all()
-    if not should_refresh_summary(messages, conversation):
+    persistent_memory = session.exec(
+        select(ConversationMemory).where(
+            ConversationMemory.conversation_id == conversation_id,
+            ConversationMemory.organization_id == conversation.organization_id,
+            ConversationMemory.status == "active",
+        )
+    ).all()
+    if not get_summary_refresh_reason(
+        messages,
+        conversation,
+        persistent_memory=list(persistent_memory),
+        relevant_history=relevant_history,
+    ):
         return False
 
     settings = get_settings()
-    keep_recent = max(0, settings.context_summary_keep_recent_messages)
-    summary_source = messages[:-keep_recent] if keep_recent else messages
-    if not summary_source:
-        return False
     cursor = conversation.context_summary_through_message_id or 0
-    new_source = [message for message in summary_source if int(message.id or 0) > cursor]
+    active_messages = messages_after_summary_cursor(messages, cursor)
+    answer_window = active_messages[-max(1, settings.context_answer_recent_messages) :]
+    history_tokens = estimate_history_region_tokens(
+        messages=answer_window,
+        summary=conversation.context_summary,
+        persistent_memory=list(persistent_memory),
+        relevant_history=relevant_history,
+        max_message_chars=settings.context_message_max_chars,
+        max_summary_tokens=settings.context_answer_summary_max_tokens,
+        max_persistent_memory_tokens=settings.context_answer_memory_max_tokens,
+        max_relevant_history_tokens=settings.context_answer_history_max_tokens,
+    )
+    new_source = select_summary_batch(
+        messages=active_messages,
+        keep_recent_messages=settings.context_summary_keep_recent_messages,
+        current_history_tokens=history_tokens,
+        history_budget_tokens=settings.context_history_region_budget_tokens,
+        target_ratio=settings.context_summary_target_ratio,
+        max_summary_tokens=settings.context_summary_max_tokens,
+        min_messages=settings.context_summary_min_compactable_messages,
+        max_messages=settings.context_summary_max_batch_messages,
+    )
     if not new_source:
         return False
 
@@ -620,6 +925,30 @@ def maybe_update_conversation_summary(conversation_id: int, session: Session) ->
     session.add(conversation)
     session.commit()
     return True
+
+
+def _tool_refs_from_dict(value: Any) -> list[ToolResultRef]:
+    refs: list[ToolResultRef] = []
+    for raw in value or []:
+        if isinstance(raw, ToolResultRef):
+            refs.append(raw)
+        elif isinstance(raw, dict):
+            refs.append(
+                ToolResultRef(
+                    tool_name=str(raw.get("tool_name") or "unknown"),
+                    summary=str(raw.get("summary") or raw.get("content") or ""),
+                    source_ids=[str(item) for item in raw.get("source_ids") or []],
+                    result_ref=str(raw.get("result_ref") or ""),
+                    content=str(raw.get("content") or ""),
+                    truncated=bool(raw.get("truncated") or False),
+                    error=str(raw.get("error") or ""),
+                    created_at=str(raw.get("created_at") or ""),
+                    used_in_answer=bool(raw.get("used_in_answer") or False),
+                    citation_used=bool(raw.get("citation_used") or False),
+                    importance=str(raw.get("importance") or "normal"),
+                )
+            )
+    return refs
 
 
 def _recovery_actions_from_dict(value: Any) -> list[RecoveryAction]:

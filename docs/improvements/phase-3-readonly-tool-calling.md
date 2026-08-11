@@ -23,7 +23,7 @@ Agent 只能在当前组织和知识库范围内读取资料。
 ```text
 用户问题
   -> Router
-  -> direct / rag / tool / complex
+  -> direct / rag / tool
   -> rag: Query Rewrite -> Dense + BM25 + RRF + rerank
   -> tool_decision
   -> tool_call
