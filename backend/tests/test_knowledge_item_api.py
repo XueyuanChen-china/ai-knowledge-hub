@@ -191,7 +191,14 @@ class KnowledgeItemApiTests(unittest.TestCase):
             self.assertEqual([chunk.vector_id for chunk in chunks], ["vector_a", "vector_b"])
 
     def test_delete_knowledge_item_removes_chunks_before_delete(self) -> None:
-        response = self.client.delete(f"/knowledge-items/{self.knowledge_item_id}")
+        original_delete_vectors = knowledge_item_api.delete_vectors
+        try:
+            # 本用例验证业务库级联清理；ES 删除由 test_vector_service 单独覆盖。
+            # CI 的 backend job 不启动 Elasticsearch，避免把单元测试绑定到外部服务。
+            knowledge_item_api.delete_vectors = lambda knowledge_base_id, vector_ids: None
+            response = self.client.delete(f"/knowledge-items/{self.knowledge_item_id}")
+        finally:
+            knowledge_item_api.delete_vectors = original_delete_vectors
 
         self.assertEqual(response.status_code, 204)
 
