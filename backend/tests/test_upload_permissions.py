@@ -2,6 +2,7 @@ import sys
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 from sqlmodel import Session
 
@@ -12,12 +13,18 @@ for path in (BACKEND_DIR, TESTS_DIR):
         sys.path.insert(0, str(path))
 
 from app.db.models import UploadTask
+from app.main import app
+from app.services.storage.provider import get_object_storage_adapter
 from resource_authorization_utils import ResourceAuthorizationTestCase
 
 
 class UploadPermissionTests(ResourceAuthorizationTestCase, unittest.TestCase):
     def setUp(self) -> None:
         self.setUp_resource_authorization()
+        # 这些用例只验证组织边界和角色权限，不应要求 CI 提供真实 OSS 密钥。
+        # FastAPI 会在路由函数执行前解析 storage dependency，因此即使最终
+        # 预期是 404/403，也必须显式注入测试替身。
+        app.dependency_overrides[get_object_storage_adapter] = lambda: Mock()
         with Session(self.engine) as session:
             task = UploadTask(
                 organization_id=self.organization_b_id,
