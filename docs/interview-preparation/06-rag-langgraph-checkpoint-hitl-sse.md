@@ -21,7 +21,6 @@ flowchart LR
     START --> Router
     Router -->|direct| Direct
     Router -->|rag| Gap["Context Gap Check"]
-    Router -->|complex| Complex
     Router -->|tool| ToolDecision
     Gap --> HistoryRecovery
     HistoryRecovery --> Rewrite
@@ -43,7 +42,7 @@ Qwen Router 根据系统提示和结构化输出选择：
 
 - `direct`：寒暄、通用解释，不需要企业知识；
 - `rag`：需要少量知识库证据的具体问题；
-- `complex`：需要跨文档总结、对比和规划；
+- 复杂总结和对比：当前统一进入 `rag`，暂未单独实现多文档总结图；
 - `tool`：用户明确要求展开上一轮文档、查看邻居 chunk 或列出资料。
 
 规则兜底用于模型未配置、超时或输出非法时。Router 不需要知道全部文档内容，只判断问题是否依赖当前知识库；知识库选择是另一个问题，当前 API 通常已经带 `knowledge_base_id`。
@@ -93,9 +92,40 @@ human_review interrupt
 
 连接池维护可复用连接，请求借用后归还，避免每次聊天重新建立 TCP、认证和 TLS 连接。
 
+`PostgresSaver` 默认和业务 PostgreSQL 使用同一个数据库，但不会创建一个新的数据库。
+显式执行 checkpoint setup 后，它会创建 LangGraph 自己维护的表：
+
+```text
+checkpoint_migrations  checkpoint 表结构版本
+checkpoints            thread 的状态快照、父快照和 checkpoint 数据
+checkpoint_blobs       较大的 channel 数据
+checkpoint_writes      节点写入记录
+```
+
+它只负责保存和读取工作流状态，不负责保存用户可见的 `messages`，也不负责判断会话权限。
+`Conversation`、`Message`、`ReviewTask` 是业务表；checkpoint 是恢复工作流的内部表，两者不能互相替代。
+
 `setup` 只通过显式脚本初始化第三方 checkpoint 表；应用每次启动只连接，不自动 DDL，防止多副本同时改表。
 
 ## 七、Human-in-the-loop
+
+核心代码只有两步：节点内暂停，外部审核后恢复。
+
+```python
+# 节点内暂停，payload 会返回给前端
+resume_value = interrupt(review_payload)
+
+# 审核接口恢复同一个 thread
+graph.invoke(
+    Command(resume={"approved": True, "human_note": "证据可用"}),
+    config={"configurable": {"thread_id": thread_id}},
+)
+```
+
+第一次 `graph.invoke(initial_state, config=...)` 启动新图；恢复时传入
+`Command(resume=...)`，LangGraph 根据 `thread_id` 读取 checkpoint，从暂停位置继续执行。
+当前项目使用 `graph.stream()` 代替 `invoke()` 返回 SSE 进度；`interrupt_before=["answer"]`
+只是答案流式边界，不是人工审核。
 
 当候选为空、rerank 分数低或证据不足时：
 
@@ -130,6 +160,13 @@ data: [{"chunk_id":51}]
 
 前端必须维护 buffer，因为一次网络 `read()` 可能拿到半个事件或多个事件。只有遇到完整 `\n\n` 才解析。
 
+模型流式响应通常也是“外层 JSON + `delta.content`”的 SSE：后端逐个解析外层 JSON，取出
+`content` 后立即转发给前端。普通文本模式下，`content` 只是文本，外层 JSON 的转义已经由
+`json.loads()` 处理，不需要等待完整答案。
+
+JSON Mode 则不同：`content` 自身还是一段未完成的内部 JSON。后端必须先累积片段，等内部 JSON
+闭合后再解析 `answer` 和引用编号。因此当前项目优先保证结构化结果正确，再转换成前端 SSE 展示。
+
 当前答案链路为了稳定获得结构化引用，模型可先完成结构化 JSON，再由后端按 SSE 分段发送 answer。它提供“渐进展示”，但不是模型 token 到达即转发的真 token streaming。真正 token 流需要把回答文本与引用协议解耦，并处理 JSON 转义和不完整结构。
 
 ## 九、常见追问
@@ -155,4 +192,3 @@ SSE 适合服务端持续推送、协议简单、浏览器原生支持；WebSock
 - [Chat API 与 SSE](../../backend/app/api/chat.py)
 - [Router LLM](../../backend/app/services/llm_router_service.py)
 - [Answer LLM](../../backend/app/services/llm_answer_service.py)
-

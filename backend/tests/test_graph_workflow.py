@@ -146,16 +146,19 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertIn("END", state["node_trace"])
         self.assertFalse(state["need_human_review"])
 
-    def test_complex_question_does_not_trigger_retrieve(self) -> None:
+    def test_summary_question_falls_back_to_rag(self) -> None:
         workflow = build_basic_workflow()
 
         original_retrieve = nodes.rag_service.retrieve
         original_llm_route = nodes.llm_router_service.route_question_with_llm
+        captured = {}
         try:
-            def fail_retrieve(*args, **kwargs):
-                raise AssertionError("complex route should not call retrieve in day 16")
+            def fake_retrieve(question, knowledge_base_id, session, *, top_k=5):
+                captured["question"] = question
+                captured["knowledge_base_id"] = knowledge_base_id
+                return []
 
-            nodes.rag_service.retrieve = fail_retrieve
+            nodes.rag_service.retrieve = fake_retrieve
             nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: None
 
             state = workflow.invoke(
@@ -169,12 +172,14 @@ class GraphWorkflowTests(unittest.TestCase):
             nodes.rag_service.retrieve = original_retrieve
             nodes.llm_router_service.route_question_with_llm = original_llm_route
 
-        self.assertEqual(state["route"], "complex")
+        self.assertEqual(state["route"], "rag")
+        self.assertEqual(captured["question"], "总结这个知识库的重点")
+        self.assertEqual(captured["knowledge_base_id"], self.knowledge_base.id)
         self.assertEqual(state["retrieved_docs"], [])
         self.assertEqual(state["context"], "")
         self.assertEqual(state["docs_preview"], "")
         self.assertEqual(state["citations"], [])
-        self.assertIn("complex", state["node_trace"])
+        self.assertIn("retrieve", state["node_trace"])
         self.assertIn("END", state["node_trace"])
         self.assertTrue(state["answer"])
 

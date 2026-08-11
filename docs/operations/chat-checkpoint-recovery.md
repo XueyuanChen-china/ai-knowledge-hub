@@ -31,6 +31,41 @@ GRAPH_CHECKPOINT_POOL_TIMEOUT_SECONDS=10
 postgresql://user:password@host:5432/ai_knowledge_hub
 ```
 
+## PostgresSaver 负责什么
+
+`PostgresSaver` 是 LangGraph 的 PostgreSQL checkpoint 适配器，不是一个新的数据库服务。
+默认情况下，它和业务表使用同一个 PostgreSQL 数据库，只是使用独立的 Psycopg 连接池。
+
+它主要负责：
+
+1. 把 LangGraph 每个线程的工作流状态保存到 PostgreSQL。
+2. 记录当前状态对应的 `thread_id`、checkpoint 版本和父 checkpoint。
+3. 保存节点执行过程中产生的 channel 数据和写入记录。
+4. 通过同一个 `thread_id` 读取最近的状态快照。
+5. 在 `interrupt` 后支持使用 `Command(resume=...)` 从暂停位置继续。
+
+执行一次 `setup_graph_checkpoint_schema()` 后，第三方包会创建这些表：
+
+```text
+checkpoint_migrations  checkpoint 表结构的版本记录
+checkpoints            thread 的状态快照和下一步执行信息
+checkpoint_blobs       较大的 channel 状态数据
+checkpoint_writes      节点写入记录
+```
+
+这些表不是业务表，不由 Alembic 管理；业务表仍然由 Alembic 管理。应用启动只建立连接池，
+不会在每个 API 或 Worker 启动时自动执行 `setup()`。
+
+`PostgresSaver` 不负责：
+
+- 创建 PostgreSQL 数据库或 Docker 容器；
+- 保存用户可见的聊天消息；
+- 保存 `Conversation`、`Message`、`ReviewTask` 等业务记录；
+- 判断用户是否有权访问某个会话；
+- 代替业务 API 执行人工审核权限校验。
+
+因此，checkpoint 和聊天业务记录必须分开理解：checkpoint 用于恢复工作流，业务表用于展示、审计和权限控制。
+
 ## 恢复流程
 
 1. 用户发起 `/api/chat`，图在人工审核节点中断。

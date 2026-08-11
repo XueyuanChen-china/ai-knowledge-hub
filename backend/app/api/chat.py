@@ -34,6 +34,7 @@ from app.schemas.chat import (
 from app.services import llm_answer_service
 from app.services import context_manager
 from app.services import memory_service
+from app.services.tool_context_policy import mark_tool_results_used
 from app.security.dependencies import Principal, require_permission
 from app.security.policies import PERMISSION_CHAT
 from app.security.resource_access import (
@@ -177,6 +178,8 @@ def save_assistant_message(
     answer: str,
     citations: list[dict],
     session: Session,
+    tool_result_refs: Optional[list[dict]] = None,
+    relevant_history: Optional[list[dict]] = None,
 ) -> None:
     message = Message(
         conversation_id=conversation_id,
@@ -186,9 +189,22 @@ def save_assistant_message(
     )
     session.add(message)
     session.commit()
+    mark_tool_results_used(
+        [
+            str(item.get("result_ref"))
+            for item in tool_result_refs or []
+            if isinstance(item, dict) and item.get("result_ref")
+        ],
+        session=session,
+        citation_used=bool(citations),
+    )
     touch_conversation(conversation_id, session)
     # 摘要失败只保留滑动窗口，不阻塞答案已经完成的主流程。
-    context_manager.maybe_update_conversation_summary(conversation_id, session)
+    context_manager.maybe_update_conversation_summary(
+        conversation_id,
+        session,
+        relevant_history=relevant_history,
+    )
 
 
 def build_message_preview(content: str, max_length: int = 80) -> str:
@@ -287,6 +303,11 @@ def build_graph_contexts(
     contexts = context_manager.build_conversation_contexts(
         messages=messages,
         summary=summary,
+        summary_through_message_id=(
+            conversation.context_summary_through_message_id
+            if conversation is not None
+            else None
+        ),
         persistent_memory=[
             {
                 "kind": memory.memory_type,
@@ -614,7 +635,8 @@ def replay_answer_events_from_state(
     answer_context = context_manager.build_answer_context(
         recent_context=dict(state.get("answer_context") or {}),
         retrieved_documents=documents,
-        tool_results=graph_nodes._tool_result_context_texts(state),
+        tool_results=[],
+        tool_result_refs=list(state.get("tool_result_refs") or []),
         relevant_history=list(state.get("relevant_history") or []),
         recovery_actions=list(state.get("context_recovery_actions") or []),
     )
@@ -778,6 +800,8 @@ def stream_chat_graph_events(
                 str(state.get("answer") or ""),
                 list(state.get("citations") or []),
                 session,
+                tool_result_refs=list(state.get("tool_result_refs") or []),
+                relevant_history=list(state.get("relevant_history") or []),
             )
             return
 
@@ -786,6 +810,8 @@ def stream_chat_graph_events(
             str(state.get("answer") or ""),
             list(state.get("citations") or []),
             session,
+            tool_result_refs=list(state.get("tool_result_refs") or []),
+            relevant_history=list(state.get("relevant_history") or []),
         )
         yield encode_sse_event(
             "completed",
@@ -882,6 +908,8 @@ def stream_resume_graph_events(
                 str(state.get("answer") or ""),
                 list(state.get("citations") or []),
                 session,
+                tool_result_refs=list(state.get("tool_result_refs") or []),
+                relevant_history=list(state.get("relevant_history") or []),
             )
             return
 
@@ -890,6 +918,8 @@ def stream_resume_graph_events(
             str(state.get("answer") or ""),
             list(state.get("citations") or []),
             session,
+            tool_result_refs=list(state.get("tool_result_refs") or []),
+            relevant_history=list(state.get("relevant_history") or []),
         )
         yield encode_sse_event(
             "completed",
@@ -972,6 +1002,8 @@ def run_chat_graph_impl(
         str(state.get("answer") or ""),
         list(state.get("citations") or []),
         session,
+        tool_result_refs=list(state.get("tool_result_refs") or []),
+        relevant_history=list(state.get("relevant_history") or []),
     )
     return build_response_from_state(
         state=state,
@@ -1028,6 +1060,8 @@ def resume_chat_graph_impl(
         str(state.get("answer") or ""),
         list(state.get("citations") or []),
         session,
+        tool_result_refs=list(state.get("tool_result_refs") or []),
+        relevant_history=list(state.get("relevant_history") or []),
     )
 
     return build_response_from_state(

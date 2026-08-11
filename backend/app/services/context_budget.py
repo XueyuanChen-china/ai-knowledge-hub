@@ -36,7 +36,6 @@ class ContextBudget:
     max_history_tokens: int
     max_persistent_memory_tokens: int
     max_system_tokens: int
-    max_pinned_tokens: int
 
     @classmethod
     def for_purpose(cls, purpose: str) -> "ContextBudget":
@@ -53,7 +52,6 @@ class ContextBudget:
                 max_history_tokens=settings.context_router_history_max_tokens,
                 max_persistent_memory_tokens=settings.context_router_memory_max_tokens,
                 max_system_tokens=settings.context_system_max_tokens,
-                max_pinned_tokens=settings.context_pinned_max_tokens,
             )
         if normalized == "rewrite":
             return cls(
@@ -66,7 +64,6 @@ class ContextBudget:
                 max_history_tokens=settings.context_rewrite_history_max_tokens,
                 max_persistent_memory_tokens=settings.context_rewrite_memory_max_tokens,
                 max_system_tokens=settings.context_system_max_tokens,
-                max_pinned_tokens=settings.context_pinned_max_tokens,
             )
         if normalized == "answer":
             return cls(
@@ -79,6 +76,5 @@ class ContextBudget:
                 max_history_tokens=settings.context_answer_history_max_tokens,
                 max_persistent_memory_tokens=settings.context_answer_memory_max_tokens,
                 max_system_tokens=settings.context_system_max_tokens,
-                max_pinned_tokens=settings.context_pinned_max_tokens,
             )
         raise ValueError(f"unsupported context purpose: {purpose}")

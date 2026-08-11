@@ -11,9 +11,8 @@ from app.services import context_manager
 
 DIRECT_ROUTE = "direct"
 RAG_ROUTE = "rag"
-COMPLEX_ROUTE = "complex"
 TOOL_ROUTE = "tool"
-ALLOWED_ROUTES = {DIRECT_ROUTE, RAG_ROUTE, COMPLEX_ROUTE, TOOL_ROUTE}
+ALLOWED_ROUTES = {DIRECT_ROUTE, RAG_ROUTE, TOOL_ROUTE}
 
 
 @dataclass
@@ -103,13 +102,12 @@ def build_router_messages(
     system_prompt = "\n".join(
         [
             "你是企业知识库问答系统的 Router。",
-            "你的任务是把用户问题分类成 direct、rag、complex、tool 四种路线之一。",
+            "你的任务是把用户问题分类成 direct、rag、tool 三种路线之一。",
             "direct: 打招呼、寒暄、通用概念解释、与当前知识库无关的问题。",
-            "rag: 需要从知识库里检索一到几段内容即可回答的具体问题。",
-            "complex: 需要总结、归纳、对比、梳理整个知识库或多篇文档的复杂问题。",
+            "rag: 需要从知识库里检索内容的问题，包括事实查询、流程问题、跨文档总结、归纳和对比。",
             "tool: 用户引用上一轮已经找到的文档或切片，要求展开原文、查看前后文或列出文档；此路线不要重新做向量检索。",
             "你只能输出 JSON，不要输出额外解释。",
-            '格式固定为: {"route":"direct|rag|complex|tool","reason":"一句简短原因"}',
+            '格式固定为: {"route":"direct|rag|tool","reason":"一句简短原因"}',
         ]
     )
 
@@ -336,7 +334,7 @@ def parse_router_output(raw_output: str) -> Optional[RouterDecision]:
         reason = str(payload.get("reason") or "").strip()
 
     if route is None:
-        match = re.search(r'"route"\s*:\s*"(direct|rag|complex|tool)"', normalized_output, re.I)
+        match = re.search(r'"route"\s*:\s*"(direct|rag|tool|complex)"', normalized_output, re.I)
         if match:
             route = normalize_route(match.group(1))
 
@@ -344,7 +342,7 @@ def parse_router_output(raw_output: str) -> Optional[RouterDecision]:
         route = normalize_route(normalized_output)
 
     if route is None:
-        for candidate in (DIRECT_ROUTE, RAG_ROUTE, COMPLEX_ROUTE, TOOL_ROUTE):
+        for candidate in (DIRECT_ROUTE, RAG_ROUTE, TOOL_ROUTE):
             if re.search(rf"\b{candidate}\b", normalized_output, re.I):
                 route = candidate
                 break
@@ -366,6 +364,10 @@ def normalize_route(value: object) -> Optional[str]:
     """把各种大小写或带空格的 route 归一化。"""
 
     normalized = str(value or "").strip().lower()
+    # 兼容旧 Router 或旧 checkpoint 中的 complex，但不再暴露占位分支。
+    # 复杂问题暂时统一进入已有 RAG 链路。
+    if normalized == "complex":
+        return RAG_ROUTE
     if normalized in ALLOWED_ROUTES:
         return normalized
     return None

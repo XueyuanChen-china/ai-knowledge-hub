@@ -368,6 +368,32 @@ class ConversationMemory(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ConversationToolResult(SQLModel, table=True):
+    """会话中的工具结果存档。
+
+    工具完整输出不直接长期占用 LLM 上下文。当前 Pack 使用 result_ref
+    读取摘要和来源，必要时再按引用恢复完整结果。
+    """
+
+    __tablename__ = "conversation_tool_results"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    organization_id: int = Field(foreign_key="organizations.id", index=True)
+    conversation_id: int = Field(foreign_key="conversations.id", index=True)
+    thread_id: str = Field(index=True, max_length=255)
+    result_ref: str = Field(index=True, unique=True, max_length=100)
+    tool_name: str = Field(index=True, max_length=100)
+    summary: str = ""
+    source_ids_json: str = "[]"
+    full_result_json: str = "{}"
+    used_in_answer: bool = Field(default=False, index=True)
+    citation_used: bool = Field(default=False, index=True)
+    importance: str = Field(default="normal", index=True, max_length=30)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    last_used_at: Optional[datetime] = Field(default=None)
+    expires_at: Optional[datetime] = Field(default=None, index=True)
+
+
 class ReviewTask(SQLModel, table=True):
     """人工审核任务表。
 

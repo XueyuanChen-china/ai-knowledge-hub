@@ -7,7 +7,7 @@
 ```text
 优先走 LLM Router
 失败时走规则兜底
-输出 direct / rag / complex
+输出 direct / rag / tool
 ```
 
 这样后面的图工作流就不再只靠死规则判断，而是先有一个可扩展的路由入口。
@@ -51,7 +51,7 @@
 
 - 什么叫 `direct`
 - 什么叫 `rag`
-- 什么叫 `complex`
+- 复杂总结和对比问题统一进入 `rag`
 - 输出必须是 JSON
 
 也就是说，这里不是直接“问模型要答案”，而是在“问模型这道题该走哪条链路”。
@@ -120,14 +120,14 @@ rag
 甚至外面包一层：
 
 ```json
-{"route":"complex","reason":"..."}
+{"route":"rag","reason":"..."}
 ```
 
 所以这里做了统一解析和 `normalize_route()` 归一化，最后只接受：
 
 - `direct`
 - `rag`
-- `complex`
+- `tool`
 
 别的值一律当解析失败处理，然后回退到规则 Router。
 
@@ -158,19 +158,15 @@ rag
 
 ---
 
-### 4. 为什么先加 `complex`，但不立刻检索
+### 4. 为什么复杂问题暂时统一走 `rag`
 
 [backend/app/graph/workflow.py](/Users/xueyuanchen.x/Desktop/ai-knowledge-hub/backend/app/graph/workflow.py:1)
 
-Day 16 先把 `complex` 识别出来，但 `complex_answer_node()` 仍然只是占位节点。
+当前项目没有单独的多文档总结工作流。为了避免出现“Router 识别出来但没有可用回答”的占位分支，复杂的总结、归纳和对比问题暂时统一进入已有 RAG 链路。
 
 原因很直接：
 
-- `complex` 往往不是一次检索就能答好
-- 它后面通常要扩成多步：`retrieve -> rerank -> summarize`
-- 如果今天把多步总结也一口气塞进来，调试面会突然变大
-
-所以今天先把“路由边界”立住。
+后续如果要增强，可以在 RAG 之上增加子问题拆解和多路检索，但不作为当前收尾范围。
 
 ---
 
@@ -183,7 +179,7 @@ START
   -> router
       -> direct
       -> rag
-      -> complex
+      -> tool
   -> END
 ```
 
@@ -191,7 +187,7 @@ START
 
 - `direct`：不查知识库
 - `rag`：进入检索
-- `complex`：先识别，后续再扩成多步总结流
+- `tool`：直接调用上一轮上下文相关的只读工具
 
 ---
 
@@ -216,7 +212,7 @@ START
 
 - `你好 -> direct`
 - `采购复核的触发条件是什么 -> rag`
-- `总结这个知识库的重点 -> complex`
+- `总结这个知识库的重点 -> rag`
 - 如果 LLM Router 有结果，优先使用 LLM 结果
 
 并且测试里显式 mock 掉了真实外部调用，避免本地配了 Key 后单测误打线上接口。

@@ -59,11 +59,6 @@ def build_checkpointed_workflow(
         "review_rejected",
         lambda state: nodes.review_rejected_node(state),
     )
-    builder.add_node(
-        "complex",
-        lambda state: nodes.complex_answer_node(state),
-    )
-
     builder.add_edge(START, "router")
     builder.add_conditional_edges(
         "router",
@@ -71,7 +66,6 @@ def build_checkpointed_workflow(
         {
             nodes.DIRECT_ROUTE: "direct",
             nodes.RAG_ROUTE: "context_gap_check",
-            nodes.COMPLEX_ROUTE: "complex",
             nodes.TOOL_ROUTE: "tool_decision",
         },
     )
@@ -108,8 +102,6 @@ def build_checkpointed_workflow(
     )
     builder.add_edge("answer", END)
     builder.add_edge("review_rejected", END)
-    builder.add_edge("complex", END)
-
     return builder.compile(checkpointer=get_graph_checkpointer())
 
 
@@ -117,8 +109,6 @@ def route_after_router(state: GraphState) -> str:
     route = str(state.get("route") or "").strip().lower()
     if route == nodes.DIRECT_ROUTE:
         return nodes.DIRECT_ROUTE
-    if route == nodes.COMPLEX_ROUTE:
-        return nodes.COMPLEX_ROUTE
     if route == nodes.TOOL_ROUTE:
         return nodes.TOOL_ROUTE
     return nodes.RAG_ROUTE

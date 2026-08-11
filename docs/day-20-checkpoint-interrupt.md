@@ -43,7 +43,7 @@ START
   -> router
       -> direct
       -> retrieve
-      -> complex
+      -> rag（复杂总结暂时复用 RAG）
 
 retrieve
   -> relevance_check
