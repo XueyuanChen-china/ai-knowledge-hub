@@ -61,6 +61,26 @@ class HybridRetrievalTests(unittest.TestCase):
         self.assertEqual(fused[0].dense_score, 0.0)
         self.assertEqual(fused[0].bm25_score, 8.0)
 
+    def test_hybrid_retrieval_deduplicates_identical_chunks_from_repeated_uploads(self) -> None:
+        duplicate_a = build_hit("doc-a", 10, 0.95, "同一份制度正文")
+        duplicate_a.metadata["filename"] = "policy.pdf"
+        duplicate_b = build_hit("doc-b", 20, 0.80, "同一份制度正文")
+        duplicate_b.metadata["filename"] = "policy.pdf"
+        different_section = build_hit("doc-c", 30, 0.70, "同一文件的另一章节")
+        different_section.metadata["filename"] = "policy.pdf"
+        same_text_other_file = build_hit("doc-d", 40, 0.60, "同一份制度正文")
+        same_text_other_file.metadata["filename"] = "other-policy.pdf"
+
+        unique = retrieval_service.deduplicate_retrieval_hits(
+            [duplicate_a, duplicate_b, different_section, same_text_other_file],
+            top_k=5,
+        )
+
+        self.assertEqual(
+            [hit.vector_id for hit in unique],
+            ["doc-a", "doc-c", "doc-d"],
+        )
+
     def test_hybrid_retrieval_applies_the_same_scope_to_both_retrievers(self) -> None:
         captured = {}
         original_dense = retrieval_service.search_similar_chunks
@@ -101,6 +121,43 @@ class HybridRetrievalTests(unittest.TestCase):
         self.assertEqual(captured["dense"], (7, 3, "采购复核的触发条件", 8))
         self.assertEqual(captured["bm25"], (7, 3, "采购复核的触发条件", 9))
         self.assertEqual(len(hits), 2)
+
+    def test_hybrid_retrieval_deduplicates_each_candidate_list_before_fusion(self) -> None:
+        original_dense = retrieval_service.search_similar_chunks
+        original_bm25 = retrieval_service.search_bm25_chunks
+        original_rerank = retrieval_service.rerank_semantic_hits
+        original_settings = retrieval_service.get_settings
+        try:
+            def fake_dense(*args, **kwargs):
+                return [
+                    build_hit("duplicate-1", 1, 0.99, "重复上传的背景内容"),
+                    build_hit("duplicate-2", 2, 0.98, "重复上传的背景内容"),
+                    build_hit("relevant", 3, 0.80, "采购复核的金额门槛"),
+                ]
+
+            retrieval_service.search_similar_chunks = fake_dense
+            retrieval_service.search_bm25_chunks = lambda *args, **kwargs: []
+            retrieval_service.rerank_semantic_hits = lambda query, hits, *, top_n: hits
+            retrieval_service.get_settings = lambda: SimpleNamespace(
+                retrieval_dense_candidate_k=2,
+                retrieval_bm25_candidate_k=2,
+                retrieval_rrf_k=60,
+                retrieval_rerank_top_n=5,
+            )
+
+            hits = retrieval_service.retrieve_hybrid_chunks(
+                organization_id=7,
+                knowledge_base_id=3,
+                query="采购复核",
+                top_k=2,
+            )
+        finally:
+            retrieval_service.search_similar_chunks = original_dense
+            retrieval_service.search_bm25_chunks = original_bm25
+            retrieval_service.rerank_semantic_hits = original_rerank
+            retrieval_service.get_settings = original_settings
+
+        self.assertEqual([hit.vector_id for hit in hits], ["duplicate-1", "relevant"])
 
     def test_hybrid_retrieval_runs_original_and_rewrite_queries(self) -> None:
         captured = []
