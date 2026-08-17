@@ -1,6 +1,7 @@
 """U8 的统一混合检索入口。"""
 
 import logging
+import re
 import time
 from dataclasses import replace
 from typing import Iterable, Optional
@@ -64,6 +65,16 @@ def retrieve_hybrid_chunks(
                     top_k=max(top_k, settings.retrieval_bm25_candidate_k),
                 )
             )
+        # 先在每一路候选中去重，再做 RRF。否则同一文件的重复上传会占满
+        # dense/BM25 的候选窗口，真正相关但只命中一次的章节根本进不了融合阶段。
+        dense_hits = deduplicate_retrieval_hits(
+            dense_hits,
+            top_k=max(top_k, settings.retrieval_dense_candidate_k),
+        )
+        bm25_hits = deduplicate_retrieval_hits(
+            bm25_hits,
+            top_k=max(top_k, settings.retrieval_bm25_candidate_k),
+        )
         fused_hits = reciprocal_rank_fusion(
             dense_hits,
             bm25_hits,
@@ -93,7 +104,7 @@ def retrieve_hybrid_chunks(
             time.perf_counter() - started_at,
             outcome="success",
         )
-        return reranked_hits[:top_k]
+        return deduplicate_retrieval_hits(reranked_hits, top_k=top_k)
     except Exception:
         get_metrics().record_operation(
             "hybrid_retrieval",
@@ -101,6 +112,36 @@ def retrieve_hybrid_chunks(
             outcome="error",
         )
         raise
+
+
+def deduplicate_retrieval_hits(
+    hits: Iterable[SemanticSearchHit],
+    *,
+    top_k: int,
+) -> list[SemanticSearchHit]:
+    """去掉重复上传产生的相同 chunk，避免候选位被副本占满。
+
+    同一个文件可能被上传多次，数据库和 ES 中会有不同的 document/chunk ID，
+    但正文完全相同。检索时按“文件名 + 规范化正文”去重，保留当前排序中分数
+    最高的一条；不同章节仍然保留，避免把同一文件的有效证据错误合并。
+    """
+
+    if top_k < 1:
+        return []
+
+    unique_hits: list[SemanticSearchHit] = []
+    seen: set[tuple[str, str]] = set()
+    for hit in hits:
+        filename = str(hit.metadata.get("filename") or "").strip().lower()
+        normalized_content = re.sub(r"\s+", "", str(hit.content or "")).strip()
+        key = (filename, normalized_content or hit.vector_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_hits.append(hit)
+        if len(unique_hits) >= top_k:
+            break
+    return unique_hits
 
 
 def reciprocal_rank_fusion(
