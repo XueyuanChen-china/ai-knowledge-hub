@@ -68,7 +68,7 @@ export default function HomePage() {
     <Stack gap="lg">
       <PageHeader
         title="知识库总览"
-        description="前端主工作台已经接上知识库、文档上传索引和对话入口，后续继续往搜索、审核和运营能力扩展。"
+        description="从知识库管理、文档处理到语义搜索和专家问答的统一工作台。"
       />
 
       {error ? (
@@ -117,16 +117,17 @@ export default function HomePage() {
         <Grid.Col span={{ base: 12, lg: 4 }}>
           <Card withBorder radius="sm" padding="lg" h="100%">
             <Stack gap="md">
-              <Text fw={700}>当前前端初始化范围</Text>
+              <Text fw={700}>工作台入口</Text>
               <Text size="sm" c="dimmed">
-                这版先完成路由、布局、API client 和基础页面。后续再把上传、索引、语义搜索、审核恢复逐步接上。
+                从这里可以进入内容管理、文档处理、语义检索和带引用的专家问答流程。
               </Text>
-              <Text size="sm">已就绪模块：</Text>
+              <Text size="sm">已就绪能力：</Text>
               <Stack gap={8}>
                 <Text size="sm">1. 首页总览</Text>
                 <Text size="sm">2. 知识库列表页</Text>
                 <Text size="sm">3. 文档上传与索引页</Text>
                 <Text size="sm">4. 对话工作台入口页</Text>
+                <Text size="sm">5. 语义搜索、引用和人工审核</Text>
               </Stack>
             </Stack>
           </Card>

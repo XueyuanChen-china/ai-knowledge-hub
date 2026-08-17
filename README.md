@@ -147,10 +147,10 @@ npm run lint
 npm run build
 ```
 
-当前自动化验证基线（2026-08-06）：
+当前自动化验证基线（2026-08-11）：
 
 ```text
-后端 unittest：230 passed，5 skipped
+后端 unittest：243 tests passed（CI 环境跳过 12 个外部服务测试）
 前端 Vitest：9 passed
 前端 lint：passed
 前端 production build：passed
