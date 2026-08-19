@@ -1,4 +1,5 @@
 from app.services.document_splitter.chunk_assembler import (
+    assemble_element_chunks,
     assemble_chunks,
     should_flush_on_block_boundary,
     validate_splitter_options,
@@ -31,6 +32,7 @@ from app.services.document_splitter.section_builder import (
 )
 from app.services.document_splitter.splitter import (
     ParsedSplitterSource,
+    build_document_elements,
     build_document_blocks,
     build_document_sections,
     normalize_splitter_source,
@@ -42,8 +44,10 @@ DEFAULT_CHUNK_SIZE = DEFAULT_MAX_CHUNK_SIZE
 
 __all__ = [
     "assemble_chunks",
+    "assemble_element_chunks",
     "Block",
     "build_document_blocks",
+    "build_document_elements",
     "build_document_sections",
     "build_plain_text_heading_sections",
     "build_plain_text_paragraph_blocks",

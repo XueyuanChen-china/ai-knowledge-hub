@@ -20,9 +20,11 @@ from app.services.document_splitter.evaluation import (
     evaluate_splitter_regression_snapshot,
 )
 from app.services.document_splitter.splitter import split_document_text
+from app.services.document_splitter.splitter import build_document_elements
 
 __all__ = [
     "Block",
+    "build_document_elements",
     "build_splitter_regression_snapshot",
     "ChunkAssembler",
     "ChunkData",

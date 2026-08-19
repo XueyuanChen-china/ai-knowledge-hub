@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 
-from app.services.document_splitter.models import Block, ChunkData
+from app.services.document_splitter.models import Block, ChunkData, DocumentElement
 from app.services.document_splitter.normalizer import normalize_text
 
 
@@ -114,6 +114,62 @@ def assemble_chunks(
         chunk_overlap,
     )
     return chunks
+
+
+def assemble_element_chunks(
+    elements: list[DocumentElement],
+    *,
+    target_chunk_size: int,
+    max_chunk_size: int,
+    chunk_overlap: int,
+) -> list[ChunkData]:
+    """从带 section context 的 Element 直接进入 Chunk 组装。
+
+    现有超长拆分算法内部仍使用 Block 作为 packing record，避免在这次模型
+    简化中重写已经通过回归测试的 table/list/code/overlap 逻辑。Block 在这里
+    只是内部兼容投影，不再是 Parser -> Chunk 的公开中间阶段。
+    """
+
+    return assemble_chunks(
+        _elements_to_packing_blocks(elements),
+        target_chunk_size=target_chunk_size,
+        max_chunk_size=max_chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+
+
+def _elements_to_packing_blocks(elements: list[DocumentElement]) -> list[Block]:
+    """把 Element 转成 assembler 内部的轻量 packing record。"""
+
+    packing_blocks: list[Block] = []
+    for element in elements:
+        metadata = dict(element.metadata)
+        if metadata.get("section_context_only"):
+            continue
+        heading_path = list(element.heading_path or metadata.get("heading_path") or [])
+        section_id = element.section_id
+        if section_id is None:
+            section_id = metadata.get("section_index", 0)
+
+        block_index = metadata.get("block_index", len(packing_blocks))
+        metadata.update(
+            {
+                "block_type": element.element_type,
+                "heading_path": heading_path,
+                "paragraph_start": metadata.get("paragraph_start", block_index),
+                "paragraph_end": metadata.get("paragraph_end", block_index),
+                "section_index": section_id,
+                "block_index": block_index,
+            }
+        )
+        packing_blocks.append(
+            Block(
+                block_type=element.element_type,
+                content=element.text.strip(),
+                metadata=metadata,
+            )
+        )
+    return packing_blocks
 
 
 def should_flush_on_block_boundary(prev_block: Block, next_block: Block) -> bool:
