@@ -18,17 +18,23 @@ Source File
   -> Parser
   -> DocumentElement[]
   -> Normalizer
-  -> Section[]
-  -> Block[]
-  -> Chunk Assembler
+  -> assign section_id / heading_path
+  -> structure-aware Chunk Assembler
   -> ChunkData[]
 ```
 
+当前主链路已经简化为 `DocumentElement -> section context -> ChunkData`。`Section`
+和 `Block` 仍保留为回归快照、调试和旧调用的兼容视图，不再作为 Parser 到 Chunk
+之间必须经过的业务对象。Chunk assembler 内部仍可以把 Element 投影为轻量 packing
+record，以复用已经验证的表格、列表、代码和 overlap 算法。
+
 ### 四层数据的区别
 
-- `DocumentElement`：parser 观察到的原始结构元素，如 heading、paragraph、table；
-- `Section`：带 heading path 的章节边界；
-- `Block`：可用于组装的结构单元，保留类型和来源位置，不受 chunk size 直接约束；
+- `DocumentElement`：parser 观察到的原始结构元素，如 heading、paragraph、table，
+  并在 section context 阶段补充 `section_id` 和 `heading_path`；
+- `Section`：兼容视图中的章节边界，不再是主 Chunk pipeline 必经的容器；
+- `Block`：兼容视图或 assembler 内部的 packing record，保留类型和来源位置，不再
+  作为独立的 Parser 输出层；
 - `ChunkData`：最终检索和 Embedding 单元，受 target/max size 与 overlap 规则约束。
 
 ## 三、各格式如何解析
@@ -266,7 +272,8 @@ PDF 标题通常综合判断：
 5. 单句仍超长才固定窗口；
 6. 表格按行切并重复表头，代码按行切；
 7. chunk 内容补 heading prefix；
-8. overlap 只用于同一个原始 Block 被拆成多个子 Block 的情况；独立 Block 因 packing 结束时默认不复制前一块内容。
+8. overlap 只用于同一个原始 Element 被结构化拆成多个 fragment 的情况；独立 Element
+   因 packing 结束时默认不复制前一块内容。
 
 `target_chunk_size=850`、`max_chunk_size=1000` 当前按字符近似，不是 token。目标值是组装方向，不要求每个 chunk 都接近 850：完整短 section 或表格可以更短。
 
@@ -275,8 +282,8 @@ PDF 标题通常综合判断：
 overlap 不是每个 Chunk 都自动添加。它主要解决“同一个连续内容被迫拆开”时的上下文断裂：
 
 ```text
-同一个超长 paragraph Block
-  -> 句子 Block 1、句子 Block 2、句子 Block 3
+同一个超长 paragraph Element
+  -> 句子 Element 1、句子 Element 2、句子 Element 3
   -> 长度切分成 Chunk 0、Chunk 1
   -> Chunk 1 开头复制 Chunk 0 尾部的完整句子
 ```
@@ -288,10 +295,10 @@ Chunk 0：员工申请出差后需要提交预算。审批通过后才能订票�
 Chunk 1：审批通过后才能订票。出差结束后需要上传发票。
 ```
 
-下面这些情况默认不做跨 Block overlap：
+下面这些情况默认不做跨 Element overlap：
 
 ```text
-独立 paragraph Block 1 -> 独立 paragraph Block 2
+独立 paragraph Element 1 -> 独立 paragraph Element 2
 不同 Section
 paragraph <-> table
 table <-> code

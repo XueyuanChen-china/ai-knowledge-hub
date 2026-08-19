@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from typing import Optional
 
 from app.services.document_splitter.models import Block, DocumentElement, PdfPageText, Section
@@ -11,6 +12,121 @@ from app.services.document_splitter.parsers.plain_text_parser import (
     parse_plain_text_elements,
     parse_plain_text_elements_from_pages,
 )
+
+
+def assign_section_context(
+    elements: list[DocumentElement],
+    file_type: str,
+) -> list[DocumentElement]:
+    """给 Element 标注 section 边界，作为新的主链路中间步骤。
+
+    Section 对象仍由兼容层生成，用于回归快照和旧调用；实际 Chunk 组装只消费
+    这里返回的 Element 列表。当前复用已经验证过的 section boundary 规则，避免
+    在模型简化重构中同时改变多格式解析行为。
+    """
+
+    if not elements:
+        return []
+
+    sections = build_sections_from_elements(elements, file_type)
+    if not sections:
+        return [
+            replace(
+                element,
+                section_id=0,
+                heading_path=list(element.heading_path or element.metadata.get("heading_path") or []),
+            )
+            for element in elements
+        ]
+
+    annotated: list[DocumentElement] = []
+    element_index = 0
+
+    def annotate(
+        element: DocumentElement,
+        *,
+        section_index: int,
+        section: Section,
+        block_index: int,
+        block: Optional[Block] = None,
+        section_context_only: bool = False,
+    ) -> None:
+        heading_path = list(
+            (block.metadata.get("heading_path") if block else None)
+            or element.heading_path
+            or element.metadata.get("heading_path")
+            or section.heading_path
+            or []
+        )
+        metadata = {
+            **element.metadata,
+            "heading_path": heading_path,
+            "section_index": section_index,
+            "section_heading_path": list(section.heading_path),
+            "section_level": section.level,
+            "block_index": block_index,
+            "section_splitter": section.metadata.get("splitter"),
+        }
+        if section_context_only:
+            metadata["section_context_only"] = True
+        annotated.append(
+            replace(
+                element,
+                section_id=section_index,
+                heading_path=heading_path,
+                metadata=metadata,
+            )
+        )
+
+    for section_index, section in enumerate(sections):
+        for block_index, block in enumerate(section.blocks):
+            # Markdown 的文档标题等“上级标题上下文”可能被兼容 Section
+            # 合并掉。它仍然属于当前 section，但没有对应的 Block。
+            while element_index < len(elements):
+                element = elements[element_index]
+                if (
+                    element.element_type == block.block_type
+                    and element.text.strip() == block.content.strip()
+                ):
+                    annotate(
+                        element,
+                        section_index=section_index,
+                        section=section,
+                        block_index=block_index,
+                        block=block,
+                    )
+                    element_index += 1
+                    break
+
+                annotate(
+                    element,
+                    section_index=section_index,
+                    section=section,
+                    block_index=block_index,
+                    section_context_only=True,
+                )
+                element_index += 1
+
+    # 防御性处理：如果某个 fallback section 没有生成兼容 Block，不丢原始元素。
+    while element_index < len(elements):
+        element = elements[element_index]
+        heading_path = list(element.heading_path or element.metadata.get("heading_path") or [])
+        annotated.append(
+            replace(
+                element,
+                section_id=len(sections) - 1,
+                heading_path=heading_path,
+                metadata={
+                    **element.metadata,
+                    "heading_path": heading_path,
+                    "section_index": len(sections) - 1,
+                    "block_index": element_index,
+                },
+            )
+        )
+        element_index += 1
+
+    return annotated
 
 
 def build_sections_from_source(

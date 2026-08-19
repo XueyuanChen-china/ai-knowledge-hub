@@ -19,7 +19,11 @@ from app.services.text_splitter import (
 )
 from app.api.document import extract_text_from_file
 from app.services.document_splitter.splitter import split_document_text as split_document_text_pipeline
-from app.services.document_splitter.splitter import build_document_sections, parse_splitter_source
+from app.services.document_splitter.splitter import (
+    build_document_elements,
+    build_document_sections,
+    parse_splitter_source,
+)
 from app.services.document_splitter.parsers.pdf_layout_parser import (
     PdfLayoutLine,
     build_pdf_paragraph_text,
@@ -29,6 +33,34 @@ from app.services.document_splitter.parsers.pdf_layout_parser import (
 
 
 class TextSplitterStructureTests(unittest.TestCase):
+    def test_document_elements_carry_section_context_for_main_pipeline(self) -> None:
+        source = parse_splitter_source(
+            """# 文档标题
+
+## 第一节
+
+第一节正文。
+
+## 第二节
+
+第二节正文。
+""",
+            "md",
+        )
+
+        elements = build_document_elements(source)
+        content_elements = [element for element in elements if element.element_type == "paragraph"]
+
+        self.assertEqual([element.section_id for element in content_elements], [0, 1])
+        self.assertEqual(
+            [element.heading_path for element in content_elements],
+            [["文档标题", "第一节"], ["文档标题", "第二节"]],
+        )
+        self.assertEqual(
+            [element.metadata["section_index"] for element in content_elements],
+            [0, 1],
+        )
+
     def create_temp_workbook(self, build_callback):
         try:
             from openpyxl import Workbook

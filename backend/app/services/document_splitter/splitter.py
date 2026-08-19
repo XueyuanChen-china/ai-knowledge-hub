@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from app.services.document_splitter.chunk_assembler import assemble_chunks, validate_splitter_options
+from app.services.document_splitter.chunk_assembler import (
+    assemble_element_chunks,
+    validate_splitter_options,
+)
 from app.services.document_splitter.models import DocumentElement
 from app.services.document_splitter.models import (
     ChunkData,
@@ -22,6 +25,7 @@ from app.services.document_splitter.parsers import (
     parse_plain_text_elements_from_pages,
 )
 from app.services.document_splitter.section_builder import (
+    assign_section_context,
     build_sections_from_elements,
     build_sections_from_source,
     flatten_sections_to_blocks,
@@ -130,6 +134,18 @@ def build_document_sections(source: ParsedSplitterSource):
     )
 
 
+def build_document_elements(source: ParsedSplitterSource) -> list[DocumentElement]:
+    """返回带 section context 的主链路 Element 列表。
+
+    这是 Parser 与 ChunkAssembler 之间的新主接口。Section/Block 仍可通过
+    build_document_sections/build_document_blocks 获取，用于回归快照和兼容调用。
+    """
+
+    if source.elements is None:
+        return []
+    return assign_section_context(source.elements, source.file_type)
+
+
 def build_document_blocks(source: ParsedSplitterSource):
     """build_blocks 阶段。"""
 
@@ -170,10 +186,10 @@ def split_document_text(
         word_path=word_path,
     )
     normalized_source = normalize_splitter_source(parsed_source)
-    blocks = build_document_blocks(normalized_source)
+    elements = build_document_elements(normalized_source)
 
-    return assemble_chunks(
-        blocks,
+    return assemble_element_chunks(
+        elements,
         target_chunk_size=resolved_target_chunk_size,
         max_chunk_size=resolved_max_chunk_size,
         chunk_overlap=chunk_overlap,

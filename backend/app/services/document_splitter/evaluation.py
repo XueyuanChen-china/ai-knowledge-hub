@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from app.services.document_splitter.chunk_assembler import (
-    assemble_chunks,
+    assemble_element_chunks,
     is_markdown_table_separator,
     validate_splitter_options,
 )
@@ -20,6 +20,7 @@ from app.services.document_splitter.models import (
     Section,
 )
 from app.services.document_splitter.splitter import (
+    build_document_elements,
     build_document_blocks,
     build_document_sections,
     normalize_splitter_source,
@@ -61,8 +62,8 @@ def build_splitter_regression_snapshot(
     normalized_source = normalize_splitter_source(parsed_source)
     sections = build_document_sections(normalized_source)
     blocks = build_document_blocks(normalized_source)
-    chunks = assemble_chunks(
-        blocks,
+    chunks = assemble_element_chunks(
+        build_document_elements(normalized_source),
         target_chunk_size=resolved_target_chunk_size,
         max_chunk_size=resolved_max_chunk_size,
         chunk_overlap=chunk_overlap,

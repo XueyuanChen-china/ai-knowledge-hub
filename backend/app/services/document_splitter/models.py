@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, List, Optional, Union
 
 
 DEFAULT_TARGET_CHUNK_SIZE = 850
@@ -31,6 +31,11 @@ class DocumentElement:
     text: str = ""
     level: Optional[int] = None
 
+    # Parser 输出后由 section-context 阶段补充的语义边界。
+    # 主 Chunk pipeline 可以直接消费这些字段，不必依赖 Section/Block 包装对象。
+    section_id: Optional[Union[int, str]] = None
+    heading_path: Optional[List[str]] = None
+
     page_start: Optional[int] = None
     page_end: Optional[int] = None
 
@@ -46,7 +51,7 @@ class DocumentElement:
 
 @dataclass
 class Block:
-    """Section 内的结构块。"""
+    """兼容视图：旧快照和旧调用使用的结构块。"""
 
     block_type: str
     content: str
@@ -55,7 +60,7 @@ class Block:
 
 @dataclass
 class Section:
-    """文档里的语义分区。"""
+    """兼容视图：用于回归快照和旧 API 的语义分区。"""
 
     heading_path: list[str]
     level: int
