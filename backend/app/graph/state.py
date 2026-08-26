@@ -27,6 +27,7 @@ class GraphState(TypedDict, total=False):
 
     route: str
     route_reason: str
+    answer_mode: str
     previous_citations: list[dict]
     rewrite_queries: list[str]
     rewrite_decision: str
@@ -41,6 +42,7 @@ class GraphState(TypedDict, total=False):
     tool_call_count: int
     tool_planner_mode: str
     history_tool_results: list[dict]
+    history_recovery_count: int
     relevant_history: list[dict]
     context_gap: dict
     context_recovery_actions: list[dict]

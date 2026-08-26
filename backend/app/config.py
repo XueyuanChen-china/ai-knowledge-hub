@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     # Router 请求超时时间，单位秒。
     llm_router_timeout_seconds: int = 20
 
+    # 可选的推理强度参数。为空时不发送，兼容不支持该字段的 OpenAI 兼容服务。
+    llm_router_reasoning_effort: str = ""
+
     # Answer Node 的 OpenAI 兼容 Base URL。为空时回退到 Router 配置。
     llm_answer_base_url: str = ""
 
@@ -146,16 +149,32 @@ class Settings(BaseSettings):
     # Answer Node 请求超时时间，单位秒。
     llm_answer_timeout_seconds: int = 40
 
+    # 可选的推理强度参数。为空时不发送，兼容普通聊天模型。
+    llm_answer_reasoning_effort: str = ""
+
     # Context Management：不同 LLM 节点使用独立的上下文预算。
     # 这里是估算 Token，不替代具体模型 tokenizer；目的是先防止上下文无限增长。
     context_router_max_tokens: int = 800
     context_rewrite_max_tokens: int = 1600
     context_answer_max_tokens: int = 6000
+    # 可选的模型上下文窗口。填 0 时继续使用上面的应用级预算；填写后，
+    # Context Manager 会按“模型窗口 - 输出预留 - 固定提示词 - 推理/JSON 余量”
+    # 计算本次请求允许使用的最大输入预算。
+    context_router_model_window_tokens: int = 0
+    context_rewrite_model_window_tokens: int = 0
+    context_answer_model_window_tokens: int = 0
+    context_output_reserve_tokens: int = 512
+    context_prompt_overhead_tokens: int = 256
+    context_reasoning_safety_margin_tokens: int = 256
     context_message_max_chars: int = 1200
-    # 1 轮通常包含 user + assistant 两条消息。Answer 最多看 6 轮，
-    # Router / Rewrite 使用更小的视图，避免每个节点都携带完整历史。
+    # Answer 的活动原文窗口是最近 4 轮。更早的消息属于 retired 候选区，
+    # 仍保存在 PostgreSQL，由摘要游标和分批摘要策略逐步处理。
     context_rewrite_recent_messages: int = 8
-    context_answer_recent_messages: int = 12
+    context_answer_recent_rounds: int = 4
+    context_answer_recent_messages: int = 8
+    # 当前请求达到 Hard Watermark 时，只保留活动窗口中最近 2 轮原文，
+    # 较旧的 2 轮尝试压入本次请求的临时摘要。
+    context_answer_hard_active_rounds: int = 2
     context_router_summary_max_tokens: int = 120
     context_rewrite_summary_max_tokens: int = 250
     context_answer_summary_max_tokens: int = 500
@@ -176,13 +195,17 @@ class Settings(BaseSettings):
     # 旧配置名保留兼容，后续可移除；不再作为 Pack 硬水位。
     context_summary_hard_watermark_tokens: int = 6000
     context_summary_max_tokens: int = 500
-    context_summary_keep_recent_messages: int = 4
+    # 摘要后仍保留最近 4 轮，约 8 条 user/assistant message；其余未摘要消息
+    # 继续留在 retired 候选区，不设整体轮数上限。
+    context_summary_keep_recent_messages: int = 8
     # 软水位只负责触发维护；摘要完成后尽量回落到 60%，形成滞回区间。
     context_summary_target_ratio: float = 0.60
     # 消息数量只是压缩资格，不再单独触发摘要。至少两轮、且有一定 Token 收益才执行。
     context_summary_min_compactable_messages: int = 4
     context_summary_min_compactable_tokens: int = 100
-    context_summary_max_batch_messages: int = 12
+    # retired 候选区没有总轮数上限，但单次摘要最多处理 16 条消息，避免把
+    # 几百轮一次性发送给 LLM；下一次维护继续从摘要游标之后处理。
+    context_summary_max_batch_messages: int = 16
     context_pack_hard_watermark_ratio: float = 0.95
     context_pack_target_ratio: float = 0.75
     context_relevant_history_compacted_limit: int = 3

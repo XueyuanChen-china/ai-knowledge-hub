@@ -76,8 +76,9 @@ def decide_query_rewrite(
 def rewrite_question_with_llm(
     question: str,
     recent_messages: list[dict[str, str]],
+    conversation_context: Optional[dict] = None,
 ) -> Optional[list[str]]:
-    """调用 Router 共用的 Qwen 配置生成 1~3 个补充查询。"""
+    """调用 Router 共用的 OpenAI 兼容模型生成 1~3 个补充查询。"""
 
     if not llm_router_service.is_llm_router_configured():
         return None
@@ -89,8 +90,13 @@ def rewrite_question_with_llm(
             base_url=settings.llm_router_base_url,
             api_key=settings.llm_router_api_key,
             model=settings.llm_router_model,
-            messages=build_rewrite_messages(question, recent_messages),
+            messages=build_rewrite_messages(
+                question,
+                recent_messages,
+                conversation_context=conversation_context,
+            ),
             timeout_seconds=settings.llm_router_timeout_seconds,
+            reasoning_effort=settings.llm_router_reasoning_effort,
         )
         queries = parse_rewrite_output(raw_output, question)
     except RuntimeError:
@@ -108,12 +114,20 @@ def rewrite_question_with_llm(
 def build_rewrite_messages(
     question: str,
     recent_messages: list[dict[str, str]],
+    conversation_context: Optional[dict] = None,
 ) -> list[dict[str, str]]:
     """只构造 Query Rewrite 所需的上下文，不传入检索结果和答案。"""
 
+    raw_context = conversation_context or {}
     context_pack = context_manager.build_context_pack(
         purpose="rewrite",
         messages=recent_messages,
+        summary=raw_context.get("conversation_summary")
+        or str(raw_context.get("summary") or ""),
+        current_question=question,
+        system_instructions=list(raw_context.get("system_instructions") or []),
+        persistent_memory=list(raw_context.get("persistent_memory") or []),
+        relevant_history=list(raw_context.get("relevant_history") or []),
     )
     system_prompt = "\n".join(
         [
@@ -125,9 +139,23 @@ def build_rewrite_messages(
             '{"queries":["查询1","查询2"]}',
         ]
     )
+    if context_pack.system_instructions:
+        system_prompt += "\n本次请求的附加约束：\n" + "\n".join(
+            context_pack.system_instructions
+        )
     prompt_parts = [f"当前问题: {question.strip()}"]
     if context_pack.summary:
         prompt_parts.append(f"会话摘要:\n{context_pack.summary}")
+    if context_pack.persistent_memory:
+        prompt_parts.append(
+            "长期记忆:\n"
+            + "\n".join(item.content for item in context_pack.persistent_memory)
+        )
+    if context_pack.relevant_history:
+        prompt_parts.append(
+            "相关历史:\n"
+            + "\n".join(item.content for item in context_pack.relevant_history)
+        )
     prompt_parts.append(
         "最近对话:\n"
         + "\n".join(

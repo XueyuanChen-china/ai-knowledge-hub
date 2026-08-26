@@ -6,11 +6,12 @@ Context Management 只负责构造一次 LLM 请求的输入，不删除 message
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Iterable, List, Optional, Tuple
 
 from sqlmodel import Session, select
+from sqlalchemy import update
 
 from app.config import get_settings
 from app.db.models import Conversation, ConversationMemory, Message
@@ -99,6 +100,68 @@ def normalize_message(message: Any, max_chars: int) -> dict[str, str]:
     if max_chars > 0 and len(content) > max_chars:
         content = content[:max_chars].rstrip() + "...[已裁剪]"
     return {"role": role, "content": content}
+
+
+def select_recent_messages(
+    messages: list[Any],
+    *,
+    max_rounds: int,
+    max_messages: int,
+) -> list[Any]:
+    """按最近 user turn 选择活动窗口，而不是把“轮”误当成 message 数。"""
+
+    source = list(messages or [])
+    if not source:
+        return []
+    limit_rounds = max(1, int(max_rounds or 1))
+    selected_reversed: list[Any] = []
+    user_turns = 0
+    saw_user = False
+    for message in reversed(source):
+        role = str(
+            message.get("role") if isinstance(message, dict)
+            else getattr(message, "role", "")
+        ).lower()
+        if role == "user":
+            if saw_user and user_turns >= limit_rounds:
+                break
+            user_turns += 1
+            saw_user = True
+        elif saw_user and user_turns >= limit_rounds:
+            break
+        selected_reversed.append(message)
+
+    if not saw_user:
+        return source[-max(1, int(max_messages or 1)) :]
+    return list(reversed(selected_reversed))
+
+
+def split_recent_messages_by_rounds(
+    messages: list[Any],
+    *,
+    keep_recent_rounds: int,
+    max_rounds: int,
+    max_messages: int,
+) -> tuple[list[Any], list[Any]]:
+    """把活动窗口拆成“可摘要旧轮次”和“必须保留近期轮次”。"""
+
+    window = select_recent_messages(
+        messages,
+        max_rounds=max_rounds,
+        max_messages=max_messages,
+    )
+    user_indexes = [
+        index
+        for index, message in enumerate(window)
+        if str(
+            message.get("role") if isinstance(message, dict)
+            else getattr(message, "role", "")
+        ).lower() == "user"
+    ]
+    if len(user_indexes) <= max(1, keep_recent_rounds):
+        return [], window
+    split_at = user_indexes[-max(1, keep_recent_rounds)]
+    return window[:split_at], window[split_at:]
 
 
 def clip_text(text: str, max_tokens: int, suffix: str = "...[已裁剪]") -> tuple[str, bool]:
@@ -277,6 +340,37 @@ def _coerce_context_items(raw_items: Any, kind: str) -> list[ContextItem]:
     return items
 
 
+def _coerce_evidence_items(raw_items: Any) -> list[EvidenceItem]:
+    """把 checkpoint/API 中的 evidence dict 恢复为结构化证据对象。"""
+
+    result: list[EvidenceItem] = []
+    for raw in raw_items or []:
+        if isinstance(raw, EvidenceItem):
+            result.append(raw)
+            continue
+        if not isinstance(raw, dict):
+            continue
+        result.append(
+            EvidenceItem(
+                content=str(raw.get("content") or ""),
+                source_id=str(raw.get("source_id") or ""),
+                document_id=raw.get("document_id"),
+                chunk_id=raw.get("chunk_id"),
+                knowledge_item_id=raw.get("knowledge_item_id"),
+                title=str(raw.get("title") or ""),
+                score=float(raw.get("score") or 0.0),
+                metadata=dict(raw.get("metadata") or {}),
+            )
+        )
+    return result
+
+
+def coerce_evidence_items(raw_items: Any) -> list[EvidenceItem]:
+    """公开的 checkpoint/API 反序列化入口，供各 LLM Prompt Builder 使用。"""
+
+    return _coerce_evidence_items(raw_items)
+
+
 def _format_evidence(item: EvidenceItem, index: Optional[int] = None) -> str:
     title = item.title.strip()
     location = []
@@ -355,10 +449,14 @@ def build_context_pack(
     # 先做一次廉价的压力预检。最终选择仍由各分区预算控制，但在 Pack 已经
     # 接近硬水位时要先淘汰可重新获取的工具结果和低价值历史，避免每轮只裁一点。
     active_history = _coerce_context_items(relevant_history, "relevant_history")
-    active_evidence = list(evidence_items or [])
+    active_evidence = _coerce_evidence_items(evidence_items)
     active_tool_refs = _tool_refs_from_dict(tool_result_refs)
     active_memory = _coerce_context_items(persistent_memory, "persistent_memory")
-    candidate_messages = list(messages or [])[-max(1, budget.max_recent_messages) :]
+    candidate_messages = select_recent_messages(
+        list(messages or []),
+        max_rounds=budget.max_recent_rounds,
+        max_messages=budget.max_recent_messages,
+    )
     structured_summary = parse_structured_summary(summary)
     summary_for_estimate = (
         structured_summary.to_prompt_text()
@@ -414,7 +512,13 @@ def build_context_pack(
         # 正常检索顺序不变；只有硬水位时才按精排分数保留高价值证据。
         active_evidence = sorted(
             active_evidence,
-            key=lambda item: -float(item.score or 0.0),
+            key=lambda item: (
+                not bool(
+                    item.metadata.get("citation_used")
+                    or item.metadata.get("protected")
+                ),
+                -float(item.score or 0.0),
+            ),
         )
         compaction_actions.append("rank_evidence_for_budget")
         target_watermark = int(
@@ -474,7 +578,7 @@ def build_context_pack(
 
     selected_messages: list[dict[str, str]] = []
     # 从最新消息向前选取，最后再恢复时间顺序。
-    for raw_message in reversed(messages):
+    for raw_message in reversed(candidate_messages):
         if len(selected_messages) >= budget.max_recent_messages or remaining <= 0:
             if raw_message:
                 truncated = True
@@ -573,7 +677,8 @@ def build_context_pack(
         )
         selected_names = {item.source_ids[0] for item in selected_tool_items if item.source_ids}
         selected_tool_refs = [
-            ref for ref in normalized_refs
+            replace(ref, content="")
+            for ref in normalized_refs
             if (ref.result_ref or ref.tool_name) in selected_names
         ]
         normalized_tools = [ref.summary or ref.content for ref in selected_tool_refs]
@@ -672,23 +777,51 @@ def build_answer_context(
     tool_result_refs: Optional[list[ToolResultRef]] = None,
     relevant_history: Optional[list[Any]] = None,
     recovery_actions: Optional[list[RecoveryAction]] = None,
+    protected_citations: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """在检索完成后构造带证据预算的 Answer Context Pack。"""
 
     base = recent_context or {}
-    evidence_items = [
-        EvidenceItem(
-            content=str(getattr(document, "content", "") or ""),
-            source_id=str(getattr(document, "chunk_id", None) or getattr(document, "doc_id", None) or ""),
-            document_id=getattr(document, "doc_id", None),
-            chunk_id=getattr(document, "chunk_id", None),
-            knowledge_item_id=getattr(document, "knowledge_item_id", None),
-            title=str(getattr(document, "title", "") or ""),
-            score=float(getattr(document, "score", 0.0) or 0.0),
-            metadata=dict(getattr(document, "metadata", {}) or {}),
+    citations = protected_citations or list(base.get("citations") or [])
+    evidence_items = []
+    for document in retrieved_documents:
+        document_id = getattr(document, "doc_id", None)
+        chunk_id = getattr(document, "chunk_id", None)
+        knowledge_item_id = getattr(document, "knowledge_item_id", None)
+        metadata = dict(getattr(document, "metadata", {}) or {})
+        metadata["citation_used"] = any(
+            isinstance(citation, dict)
+            and (
+                (
+                    citation.get("doc_id") is not None
+                    and document_id is not None
+                    and str(citation.get("doc_id")) == str(document_id)
+                    and (
+                        citation.get("chunk_id") is None
+                        or chunk_id is None
+                        or str(citation.get("chunk_id")) == str(chunk_id)
+                    )
+                )
+                or (
+                    citation.get("knowledge_item_id") is not None
+                    and knowledge_item_id is not None
+                    and str(citation.get("knowledge_item_id")) == str(knowledge_item_id)
+                )
+            )
+            for citation in citations
         )
-        for document in retrieved_documents
-    ]
+        evidence_items.append(
+            EvidenceItem(
+                content=str(getattr(document, "content", "") or ""),
+                source_id=str(chunk_id or document_id or ""),
+                document_id=document_id,
+                chunk_id=chunk_id,
+                knowledge_item_id=knowledge_item_id,
+                title=str(getattr(document, "title", "") or ""),
+                score=float(getattr(document, "score", 0.0) or 0.0),
+                metadata=metadata,
+            )
+        )
     resolved_history = relevant_history if relevant_history is not None else base.get("relevant_history")
     resolved_tools = list(tool_results) if tool_results is not None else list(base.get("tool_results") or [])
     pack = build_context_pack(
@@ -701,11 +834,58 @@ def build_answer_context(
             tool_result_refs if tool_result_refs is not None else base.get("tool_result_refs")
         ),
         current_question=str(base.get("current_question") or ""),
+        system_instructions=list(base.get("system_instructions") or []),
         persistent_memory=list(base.get("persistent_memory") or []),
         relevant_history=resolved_history,
         evidence_items=evidence_items,
         recovery_actions=recovery_actions or _recovery_actions_from_dict(base.get("recovery_actions")),
     )
+    # Hard Watermark 是当前请求级别的兜底。允许额外调用一次摘要模型，把
+    # 活动窗口中较老的 2 轮压成局部摘要，最近 2 轮仍保留原文；这不会修改
+    # PostgreSQL 中的会话摘要，持久化摘要仍由回答完成后的维护流程负责。
+    if (
+        "hard_watermark_preflight" in pack.compaction_actions
+        and "hard_conversation_compaction" not in list(base.get("compaction_actions") or [])
+    ):
+        older_messages, recent_messages = split_recent_messages_by_rounds(
+            list(base.get("recent_messages") or []),
+            keep_recent_rounds=getattr(
+                get_settings(), "context_answer_hard_active_rounds", 2
+            ),
+            max_rounds=ContextBudget.for_purpose("answer").max_recent_rounds,
+            max_messages=ContextBudget.for_purpose("answer").max_recent_messages,
+        )
+        if older_messages:
+            hard_summary = summarize_conversation_with_llm(
+                older_messages,
+                parse_structured_summary(
+                    base.get("conversation_summary") or base.get("summary") or ""
+                ),
+            )
+            if hard_summary is not None:
+                pack = build_context_pack(
+                    purpose="answer",
+                    messages=recent_messages,
+                    summary=hard_summary,
+                    retrieval_context=str(base.get("retrieval_context") or ""),
+                    tool_results=resolved_tools,
+                    tool_result_refs=_tool_refs_from_dict(
+                        tool_result_refs
+                        if tool_result_refs is not None
+                        else base.get("tool_result_refs")
+                    ),
+                    current_question=str(base.get("current_question") or ""),
+                    system_instructions=list(base.get("system_instructions") or []),
+                    persistent_memory=list(base.get("persistent_memory") or []),
+                    relevant_history=resolved_history,
+                    evidence_items=evidence_items,
+                    recovery_actions=recovery_actions or _recovery_actions_from_dict(base.get("recovery_actions")),
+                )
+                pack = replace(
+                    pack,
+                    compaction_actions=list(pack.compaction_actions)
+                    + ["hard_conversation_compaction", "summary_compact_for_request"],
+                )
     return pack.to_dict()
 
 
@@ -727,14 +907,18 @@ def get_summary_refresh_reason(
 
     settings = get_settings()
     cursor = int(conversation.context_summary_through_message_id or 0)
-    active_messages = messages_after_summary_cursor(messages, cursor)
+    unsummarized_messages = messages_after_summary_cursor(messages, cursor)
     keep_recent = max(0, settings.context_summary_keep_recent_messages)
-    compactable = active_messages[:-keep_recent] if keep_recent else active_messages
+    retired_messages = (
+        unsummarized_messages[:-keep_recent]
+        if keep_recent
+        else unsummarized_messages
+    )
     min_messages = max(1, settings.context_summary_min_compactable_messages)
-    if len(compactable) < min_messages:
+    if len(retired_messages) < min_messages:
         return ""
     compactable_tokens = sum(
-        estimate_tokens(str(message.content or "")) for message in compactable
+        estimate_tokens(str(message.content or "")) for message in retired_messages
     )
     if compactable_tokens < max(1, settings.context_summary_min_compactable_tokens):
         return ""
@@ -747,7 +931,7 @@ def get_summary_refresh_reason(
         )
         or 6000
     )
-    answer_window = active_messages[-max(1, settings.context_answer_recent_messages) :]
+    answer_window = unsummarized_messages[-max(1, settings.context_answer_recent_messages) :]
     history_region_tokens = estimate_history_region_tokens(
         messages=answer_window,
         summary=getattr(conversation, "context_summary", ""),
@@ -793,7 +977,9 @@ def summarize_conversation_with_llm(
         return None
     settings = get_settings()
     history_text = "\n".join(
-        f"{message.id or ''} | {message.role}: {str(message.content or '').strip()}"
+        f"{(message.get('id') if isinstance(message, dict) else getattr(message, 'id', None)) or ''} | "
+        f"{(message.get('role') if isinstance(message, dict) else getattr(message, 'role', ''))}: "
+        f"{str((message.get('content') if isinstance(message, dict) else getattr(message, 'content', '')) or '').strip()}"
         for message in messages
     )
     previous_text = previous_summary.to_prompt_text() if previous_summary else "无"
@@ -821,6 +1007,7 @@ def summarize_conversation_with_llm(
             timeout_seconds=settings.llm_router_timeout_seconds,
             max_tokens=settings.context_summary_max_tokens,
             json_mode=True,
+            reasoning_effort=settings.llm_router_reasoning_effort,
         )
     except Exception:
         get_metrics().record_operation(
@@ -883,8 +1070,8 @@ def maybe_update_conversation_summary(
 
     settings = get_settings()
     cursor = conversation.context_summary_through_message_id or 0
-    active_messages = messages_after_summary_cursor(messages, cursor)
-    answer_window = active_messages[-max(1, settings.context_answer_recent_messages) :]
+    unsummarized_messages = messages_after_summary_cursor(messages, cursor)
+    answer_window = unsummarized_messages[-max(1, settings.context_answer_recent_messages) :]
     history_tokens = estimate_history_region_tokens(
         messages=answer_window,
         summary=conversation.context_summary,
@@ -896,7 +1083,7 @@ def maybe_update_conversation_summary(
         max_relevant_history_tokens=settings.context_answer_history_max_tokens,
     )
     new_source = select_summary_batch(
-        messages=active_messages,
+        messages=unsummarized_messages,
         keep_recent_messages=settings.context_summary_keep_recent_messages,
         current_history_tokens=history_tokens,
         history_budget_tokens=settings.context_history_region_budget_tokens,
@@ -909,6 +1096,8 @@ def maybe_update_conversation_summary(
         return False
 
     previous = parse_structured_summary(conversation.context_summary)
+    previous_version = int(conversation.context_summary_version or 0)
+    previous_cursor = conversation.context_summary_through_message_id
     summary = summarize_conversation_with_llm(new_source, previous)
     if summary is None:
         return False
@@ -918,11 +1107,27 @@ def maybe_update_conversation_summary(
     # 只记录实际进入摘要的最后一条消息；保留的 recent messages 不会被假装已摘要。
     summary.summarized_through_message_id = new_source[-1].id
 
-    conversation.context_summary = json.dumps(summary.to_dict(), ensure_ascii=False)
-    conversation.context_summary_version += 1
-    conversation.context_summary_through_message_id = new_source[-1].id
-    conversation.context_summary_updated_at = datetime.utcnow()
-    session.add(conversation)
+    new_cursor = new_source[-1].id
+    # 摘要生成期间可能有另一个请求完成并更新了同一会话。用版本条件更新，
+    # 让后完成的旧快照不能覆盖新摘要；失败时本次维护稍后重试即可。
+    statement = (
+        update(Conversation)
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.context_summary_version == previous_version,
+            Conversation.context_summary_through_message_id == previous_cursor,
+        )
+        .values(
+            context_summary=json.dumps(summary.to_dict(), ensure_ascii=False),
+            context_summary_version=previous_version + 1,
+            context_summary_through_message_id=new_cursor,
+            context_summary_updated_at=datetime.utcnow(),
+        )
+    )
+    result = session.exec(statement)
+    if result.rowcount != 1:
+        session.rollback()
+        return False
     session.commit()
     return True
 
@@ -945,6 +1150,7 @@ def _tool_refs_from_dict(value: Any) -> list[ToolResultRef]:
                     created_at=str(raw.get("created_at") or ""),
                     used_in_answer=bool(raw.get("used_in_answer") or False),
                     citation_used=bool(raw.get("citation_used") or False),
+                    protected_for_turn=bool(raw.get("protected_for_turn") or False),
                     importance=str(raw.get("importance") or "normal"),
                 )
             )

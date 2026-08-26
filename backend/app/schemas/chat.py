@@ -54,6 +54,7 @@ class ChatRunResponse(SQLModel):
     tool_planner_mode: str = ""
     context_gap: dict[str, Any] = {}
     history_recovery_used: bool = False
+    history_recovery_count: int = 0
     relevant_history: list[dict[str, Any]] = []
     node_trace: list[str] = []
 

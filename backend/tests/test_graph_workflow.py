@@ -78,6 +78,75 @@ class GraphWorkflowTests(unittest.TestCase):
         self.assertIn("END", state["node_trace"])
         self.assertTrue(state["answer"])
 
+    def test_source_lookup_forces_retrieve_before_tool_on_first_question(self) -> None:
+        original_llm_route = nodes.llm_router_service.route_question_with_llm
+        try:
+            nodes.llm_router_service.route_question_with_llm = lambda *args, **kwargs: RouterDecision(
+                route="tool",
+                reason="模型错误地认为可以直接调用工具",
+                raw_output='{"route":"tool"}',
+            )
+            state = nodes.router_node(
+                {
+                    "question": "这句话具体来自哪个文件？",
+                    "knowledge_base_id": self.knowledge_base.id,
+                    "previous_citations": [],
+                }
+            )
+        finally:
+            nodes.llm_router_service.route_question_with_llm = original_llm_route
+
+        self.assertEqual(state["route"], "rag")
+        self.assertEqual(state["answer_mode"], "source_lookup")
+
+    def test_source_lookup_answer_uses_tool_source_only(self) -> None:
+        document = RetrievedDocument(
+            doc_id=24,
+            chunk_id=110,
+            knowledge_item_id=9,
+            title="security_incident_response.pdf",
+            content="P1 为最高等级事件，包括核心业务中断和重大数据泄露。",
+            score=0.99,
+            metadata={
+                "page_start": 1,
+                "page_end": 1,
+                "heading_path": ["1. 事件分级"],
+            },
+        )
+        result = nodes.build_source_lookup_result(
+            {
+                "retrieved_docs": [document],
+                "tool_results": [
+                    {
+                        "tool_name": "get_document",
+                        "ok": True,
+                        "data": {
+                            "document_id": 24,
+                            "filename": "security_incident_response.pdf",
+                            "content": "完整提取文本",
+                        },
+                    }
+                ],
+                "tool_citations": [
+                    {
+                        "doc_id": 24,
+                        "chunk_id": None,
+                        "knowledge_item_id": None,
+                        "title": "security_incident_response.pdf",
+                        "score": 1.0,
+                    }
+                ],
+            }
+        )
+
+        self.assertIn("文件名：security_incident_response.pdf", result.answer)
+        self.assertIn("document_id：24", result.answer)
+        self.assertIn("chunk_id：110", result.answer)
+        self.assertIn("1. 事件分级", result.answer)
+        self.assertIn("P1 为最高等级事件", result.answer)
+        self.assertEqual(len(result.citations), 1)
+        self.assertEqual(result.citations[0]["chunk_id"], 110)
+
     def test_rag_question_enters_retrieve(self) -> None:
         workflow = build_basic_workflow(retrieve_top_k=3)
 

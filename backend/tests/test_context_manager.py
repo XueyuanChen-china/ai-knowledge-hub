@@ -11,11 +11,13 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.services.context_budget import estimate_tokens
 from app.services.context_manager import (
+    build_answer_context,
     build_context_pack,
     build_conversation_contexts,
     estimate_history_region_tokens,
     get_summary_refresh_reason,
     select_summary_batch,
+    split_recent_messages_by_rounds,
 )
 from app.services.context_manager import summarize_conversation_with_llm
 from app.db.models import Message
@@ -99,6 +101,25 @@ class ContextManagerTests(unittest.TestCase):
         self.assertTrue(any(item.source_id == "chunk-2" for item in pack.omitted_items))
         self.assertIn("chunk_id=1", pack.retrieval_context)
 
+    def test_answer_context_marks_existing_citations_as_protected(self) -> None:
+        document = SimpleNamespace(
+            content="采购复核需要委员会确认。",
+            doc_id=8,
+            chunk_id=51,
+            knowledge_item_id=8,
+            title="采购制度.pdf",
+            score=0.91,
+            metadata={},
+        )
+
+        context = build_answer_context(
+            recent_context={},
+            retrieved_documents=[document],
+            protected_citations=[{"doc_id": 8, "chunk_id": 51}],
+        )
+
+        self.assertTrue(context["evidence_items"][0]["metadata"]["citation_used"])
+
     def test_relevant_history_is_budgeted_as_whole_items(self) -> None:
         pack = build_context_pack(
             purpose="rewrite",
@@ -154,7 +175,7 @@ class ContextManagerTests(unittest.TestCase):
             context_summary_soft_watermark_ratio=0.70,
             context_summary_min_compactable_messages=4,
             context_summary_min_compactable_tokens=100,
-            context_answer_recent_messages=12,
+            context_answer_recent_messages=8,
         )
 
         with patch("app.services.context_manager.get_settings", return_value=settings):
@@ -198,7 +219,7 @@ class ContextManagerTests(unittest.TestCase):
             context_summary_soft_watermark_ratio=0.70,
             context_summary_min_compactable_messages=4,
             context_summary_min_compactable_tokens=100,
-            context_answer_recent_messages=12,
+            context_answer_recent_messages=8,
         )
 
         with patch("app.services.context_manager.get_settings", return_value=settings):
@@ -229,7 +250,7 @@ class ContextManagerTests(unittest.TestCase):
             context_summary_soft_watermark_ratio=0.70,
             context_summary_min_compactable_messages=4,
             context_summary_min_compactable_tokens=1,
-            context_answer_recent_messages=12,
+            context_answer_recent_messages=8,
         )
 
         with patch("app.services.context_manager.get_settings", return_value=settings):
@@ -275,7 +296,7 @@ class ContextManagerTests(unittest.TestCase):
         self.assertGreaterEqual(len(selected), 4)
         self.assertLessEqual(len(selected), 8)
 
-    def test_answer_context_uses_six_turn_window_and_two_turn_tail(self) -> None:
+    def test_answer_context_keeps_at_most_four_user_turns(self) -> None:
         messages = [
             {"role": "user", "content": f"问题 {index}"}
             for index in range(20)
@@ -285,9 +306,25 @@ class ContextManagerTests(unittest.TestCase):
             messages=messages,
         )
 
-        self.assertEqual(len(pack.recent_messages), 12)
-        self.assertEqual(pack.recent_messages[0]["content"], "问题 8")
+        self.assertEqual(len(pack.recent_messages), 4)
+        self.assertEqual(pack.recent_messages[0]["content"], "问题 16")
         self.assertEqual(pack.recent_messages[-1]["content"], "问题 19")
+
+    def test_answer_context_uses_four_user_assistant_rounds(self) -> None:
+        messages = []
+        for index in range(1, 14):
+            messages.extend(
+                [
+                    {"role": "user", "content": f"问题 {index}"},
+                    {"role": "assistant", "content": f"回答 {index}"},
+                ]
+            )
+
+        pack = build_context_pack(purpose="answer", messages=messages)
+
+        self.assertEqual(len(pack.recent_messages), 8)
+        self.assertEqual(pack.recent_messages[0]["content"], "问题 10")
+        self.assertEqual(pack.recent_messages[-1]["content"], "回答 13")
 
     def test_tool_pack_keeps_reference_not_full_result(self) -> None:
         pack = build_context_pack(
@@ -308,16 +345,42 @@ class ContextManagerTests(unittest.TestCase):
         self.assertEqual(pack.tool_result_refs[0].result_ref, "tool-result-1")
         self.assertNotIn("完整长原文", pack.tool_results[0])
 
+    def test_hard_watermark_keeps_latest_two_of_four_active_rounds(self) -> None:
+        messages = []
+        for index in range(1, 5):
+            messages.extend(
+                [
+                    {"role": "user", "content": f"问题 {index}"},
+                    {"role": "assistant", "content": f"回答 {index}"},
+                ]
+            )
+
+        older, recent = split_recent_messages_by_rounds(
+            messages,
+            keep_recent_rounds=2,
+            max_rounds=4,
+            max_messages=8,
+        )
+
+        self.assertEqual(
+            [item["content"] for item in older],
+            ["问题 1", "回答 1", "问题 2", "回答 2"],
+        )
+        self.assertEqual(
+            [item["content"] for item in recent],
+            ["问题 3", "回答 3", "问题 4", "回答 4"],
+        )
+
     def test_pack_hard_watermark_compacts_replaceable_candidates(self) -> None:
         pack = build_context_pack(
             purpose="answer",
             messages=[
-                {"role": "user", "content": "近期对话" * 250}
+                {"role": "user", "content": "近期对话" * 500}
                 for _ in range(6)
             ],
             evidence_items=[
                 EvidenceItem(
-                    content="检索证据" * 250,
+                    content="检索证据" * 500,
                     source_id=f"chunk-{index}",
                     chunk_id=index,
                     score=float(10 - index),
@@ -358,7 +421,7 @@ class ContextManagerTests(unittest.TestCase):
             context_summary_soft_watermark_ratio=0.70,
             context_summary_min_compactable_messages=2,
             context_summary_min_compactable_tokens=1,
-            context_answer_recent_messages=12,
+            context_answer_recent_messages=8,
         )
 
         with patch("app.services.context_manager.get_settings", return_value=settings):

@@ -33,7 +33,7 @@
 
 - Router 和 Answer Node 后面可以分别接不同模型
 - 本地没配 Key 时，Router 也不会把整个图跑挂
-- 你后面换 Qwen、DeepSeek、OpenAI 兼容模型时，只改 `.env`
+- 你后面换 Qwen、DeepSeek、GPT 或其他 OpenAI 兼容模型时，只改 `.env`
 
 ---
 
@@ -57,6 +57,8 @@
 也就是说，这里不是直接“问模型要答案”，而是在“问模型这道题该走哪条链路”。
 
 #### 第二件：调 OpenAI 兼容接口
+
+当前默认示例使用 `gpt-5.6-luna`，通过项目内网提供的 `/v1/chat/completions` 兼容接口调用。配置中的 `*_BASE_URL` 只填写到 `/v1`，代码会自动拼接 `/chat/completions`；API Key 由本地环境变量提供，不写入仓库。
 
 `call_openai_compatible_chat()`
 

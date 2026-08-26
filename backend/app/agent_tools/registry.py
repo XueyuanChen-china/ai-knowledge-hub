@@ -83,7 +83,7 @@ def list_readonly_tools() -> List[Dict[str, str]]:
 
 
 def build_openai_tool_definitions() -> list[dict[str, Any]]:
-    """把内部 Pydantic 参数协议转换成 OpenAI/Qwen tools 协议。"""
+    """把内部 Pydantic 参数协议转换成 OpenAI 兼容 tools 协议。"""
 
     definitions: list[dict[str, Any]] = []
     for definition in TOOL_DEFINITIONS.values():
@@ -112,7 +112,7 @@ def plan_readonly_tool_with_llm(
     previous_citations: Optional[list[dict[str, Any]]] = None,
     conversation_context: Optional[dict[str, Any]] = None,
 ) -> Optional[ToolCallRequest]:
-    """让 Qwen 通过原生 tool_calls 选择一个只读工具。
+    """让 OpenAI 兼容模型通过原生 tool_calls 选择一个只读工具。
 
     这里只负责把模型的结构化调用转换成内部协议，真正的权限和参数校验仍由
     execute_readonly_tool() 统一完成。
@@ -169,13 +169,14 @@ def plan_readonly_tool_with_llm(
         messages=messages,
         tools=build_openai_tool_definitions(),
         timeout_seconds=settings.llm_router_timeout_seconds,
+        reasoning_effort=settings.llm_router_reasoning_effort,
     )
     if native_call is None:
         return None
     return ToolCallRequest(
         name=native_call.name,
         arguments=native_call.arguments,
-        reason="Qwen native tool call",
+        reason="native tool call",
     )
 
 
@@ -341,6 +342,8 @@ def _finish_tool_call(
 def plan_readonly_tool(
     question: str,
     retrieved_docs: list[Any],
+    *,
+    previous_citations: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[ToolCallRequest]:
     """第一版确定性工具规划器。
 
@@ -350,6 +353,20 @@ def plan_readonly_tool(
 
     normalized = re.sub(r"\s+", "", question or "").lower()
     first_doc = retrieved_docs[0] if retrieved_docs else None
+
+    if any(
+        marker in normalized
+        for marker in ("出处", "来源", "哪个文件", "哪份文件", "来自哪个", "原文位置", "具体文件", "文件名")
+    ):
+        document_id = _document_value(first_doc, "doc_id")
+        if document_id is None:
+            document_id = _citation_value(previous_citations, "doc_id")
+        if document_id:
+            return ToolCallRequest(
+                name="get_document",
+                arguments={"document_id": int(document_id)},
+                reason="问题要求确认命中原文的具体来源文件",
+            )
 
     if any(marker in normalized for marker in ("上一段", "下一段", "相邻", "前后文", "上下文")):
         chunk_id = _document_value(first_doc, "chunk_id")
@@ -411,6 +428,18 @@ def _document_value(document: Any, field: str) -> Optional[int]:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _citation_value(citations: Optional[list[dict[str, Any]]], field: str) -> Optional[int]:
+    for citation in citations or []:
+        if not isinstance(citation, dict):
+            continue
+        value = citation.get(field)
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _validation_message(error: ValidationError) -> str:

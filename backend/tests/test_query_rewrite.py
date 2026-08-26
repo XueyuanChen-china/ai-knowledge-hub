@@ -71,6 +71,42 @@ class QueryRewriteTests(unittest.TestCase):
         self.assertIn("recent conversation", answer_messages[1]["content"])
         self.assertNotIn("十个工作日内提交", router_messages[1]["content"])
 
+    def test_answer_builder_uses_structured_context_fields(self) -> None:
+        answer_messages = llm_answer_service.build_answer_messages(
+            "刚才的制度原文是什么？",
+            "",
+            conversation_context={
+                "system_instructions": ["来源查询只能返回文件和原文位置。"],
+                "persistent_memory": [
+                    {"content": "用户偏好中文回答。", "pinned": True}
+                ],
+                "evidence_items": [
+                    {
+                        "content": "供应商准入制度原文。",
+                        "source_id": "chunk:51",
+                        "document_id": 8,
+                        "chunk_id": 51,
+                        "title": "供应商制度",
+                        "score": 0.9,
+                    }
+                ],
+                "tool_result_refs": [
+                    {
+                        "tool_name": "get_document",
+                        "result_ref": "tool-result-1",
+                        "summary": "已找到供应商制度原文。",
+                        "source_ids": ["document:8"],
+                        "protected_for_turn": True,
+                    }
+                ],
+            },
+        )
+
+        self.assertIn("来源查询只能返回文件和原文位置", answer_messages[0]["content"])
+        self.assertIn("供应商准入制度原文", answer_messages[1]["content"])
+        self.assertIn("用户偏好中文回答", answer_messages[1]["content"])
+        self.assertIn("已找到供应商制度原文", answer_messages[1]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

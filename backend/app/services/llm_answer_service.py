@@ -52,6 +52,7 @@ def generate_answer(
     prepared_context = context_manager.build_answer_context(
         recent_context=conversation_context,
         retrieved_documents=documents,
+        protected_citations=list((conversation_context or {}).get("citations") or []),
     )
     context = str(
         prepared_context.get("retrieval_context")
@@ -73,6 +74,7 @@ def generate_answer(
             model=settings.model,
             messages=messages,
             timeout_seconds=settings.timeout_seconds,
+            reasoning_effort=settings.reasoning_effort,
         )
         structured = parse_answer_output(raw_output)
     except RuntimeError:
@@ -135,6 +137,7 @@ def stream_answer(
     prepared_context = context_manager.build_answer_context(
         recent_context=conversation_context,
         retrieved_documents=documents,
+        protected_citations=list((conversation_context or {}).get("citations") or []),
     )
     context = str(
         prepared_context.get("retrieval_context")
@@ -224,6 +227,7 @@ class AnswerLlmSettings:
     api_key: str
     model: str
     timeout_seconds: int
+    reasoning_effort: str = ""
 
     @property
     def is_configured(self) -> bool:
@@ -267,7 +271,7 @@ def resolve_answer_settings() -> AnswerLlmSettings:
     """解析 Answer Node 的模型配置。
 
     如果没有单独配置 Answer 参数，就回退到 Router 配置，
-    这样第一版只配一套 Qwen 参数也能直接跑通。
+    这样第一版只配一套 OpenAI 兼容模型参数也能直接跑通。
     """
 
     settings = get_settings()
@@ -285,6 +289,10 @@ def resolve_answer_settings() -> AnswerLlmSettings:
             or settings.llm_router_model.strip()
         ),
         timeout_seconds=settings.llm_answer_timeout_seconds,
+        reasoning_effort=(
+            settings.llm_answer_reasoning_effort.strip()
+            or settings.llm_router_reasoning_effort.strip()
+        ),
     )
 
 
@@ -294,6 +302,24 @@ def build_answer_messages(
     conversation_context: Optional[dict] = None,
 ) -> list[dict[str, str]]:
     """构造 Answer Node Prompt，只读取 Answer 专属上下文。"""
+
+    raw_context = conversation_context or {}
+    context_pack = context_manager.build_context_pack(
+        purpose="answer",
+        messages=list(raw_context.get("recent_messages") or []),
+        summary=raw_context.get("conversation_summary")
+        or str(raw_context.get("summary") or ""),
+        retrieval_context=context,
+        tool_results=list(raw_context.get("tool_results") or []),
+        current_question=question,
+        system_instructions=list(raw_context.get("system_instructions") or []),
+        persistent_memory=list(raw_context.get("persistent_memory") or []),
+        relevant_history=list(raw_context.get("relevant_history") or []),
+        evidence_items=context_manager.coerce_evidence_items(
+            raw_context.get("evidence_items") or []
+        ),
+        tool_result_refs=raw_context.get("tool_result_refs") or [],
+    )
 
     system_prompt = "\n".join(
         [
@@ -305,17 +331,12 @@ def build_answer_messages(
             "used_context_numbers 表示你实际引用了哪些 context 编号。",
         ]
     )
+    if context_pack.system_instructions:
+        system_prompt += "\n本次请求的附加约束：\n" + "\n".join(
+            context_pack.system_instructions
+        )
 
     prompt_parts = [f"question: {question.strip()}"]
-    context_pack = context_manager.build_context_pack(
-        purpose="answer",
-        messages=list((conversation_context or {}).get("recent_messages") or []),
-        summary=(conversation_context or {}).get("conversation_summary")
-        or str((conversation_context or {}).get("summary") or ""),
-        retrieval_context=context,
-        tool_results=list((conversation_context or {}).get("tool_results") or []),
-        relevant_history=list((conversation_context or {}).get("relevant_history") or []),
-    )
     if context_pack.summary:
         prompt_parts.append("conversation summary:\n" + context_pack.summary)
     if context_pack.recent_messages:
@@ -331,8 +352,21 @@ def build_answer_messages(
             "relevant conversation history:\n"
             + "\n".join(item.content for item in context_pack.relevant_history)
         )
+    if context_pack.persistent_memory:
+        prompt_parts.append(
+            "persistent memory:\n"
+            + "\n".join(item.content for item in context_pack.persistent_memory)
+        )
     if context_pack.tool_results:
         prompt_parts.append("tool results:\n" + "\n\n".join(context_pack.tool_results))
+    if context_pack.tool_result_refs:
+        prompt_parts.append(
+            "tool sources:\n"
+            + "\n".join(
+                f"{ref.tool_name}: {', '.join(ref.source_ids)}"
+                for ref in context_pack.tool_result_refs
+            )
+        )
     effective_context = context_pack.retrieval_context or context.strip()
     prompt_parts.extend(["context:", effective_context])
     user_prompt = "\n\n".join(prompt_parts)
@@ -350,6 +384,7 @@ def call_openai_compatible_chat(
     model: str,
     messages: list[dict[str, str]],
     timeout_seconds: int,
+    reasoning_effort: str = "",
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。"""
 
@@ -360,6 +395,8 @@ def call_openai_compatible_chat(
         "max_tokens": 512,
         "response_format": {"type": "json_object"},
     }
+    if reasoning_effort.strip():
+        payload["reasoning_effort"] = reasoning_effort.strip()
 
     endpoint = base_url.rstrip("/") + "/chat/completions"
     body = json.dumps(payload).encode("utf-8")

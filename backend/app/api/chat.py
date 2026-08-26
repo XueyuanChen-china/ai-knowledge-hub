@@ -448,6 +448,7 @@ def build_response_from_state(
         tool_planner_mode=str(state.get("tool_planner_mode") or ""),
         context_gap=dict(state.get("context_gap") or {}),
         history_recovery_used=bool(state.get("history_recovery_used") or False),
+        history_recovery_count=int(state.get("history_recovery_count") or 0),
         relevant_history=list(state.get("relevant_history") or []),
         node_trace=list(state.get("node_trace") or []),
     )
@@ -496,6 +497,7 @@ def build_node_progress_payload(
     elif node_name == "history_recovery":
         payload["context_gap"] = dict(state.get("context_gap") or {})
         payload["history_recovery_used"] = bool(state.get("history_recovery_used") or False)
+        payload["history_recovery_count"] = int(state.get("history_recovery_count") or 0)
         payload["relevant_history"] = list(state.get("relevant_history") or [])
     elif node_name == "tool_decision":
         payload["tool_used"] = bool(state.get("tool_used") or False)
@@ -553,10 +555,13 @@ def build_answer_state_from_result(
     updated_state = dict(state)
     updated_state["answer"] = result.answer
     updated_state["context"] = result.context
-    updated_state["citations"] = graph_nodes.merge_citations(
-        result.citations,
-        list(state.get("tool_citations") or []),
-    )
+    if str(state.get("answer_mode") or "") == "source_lookup":
+        updated_state["citations"] = list(result.citations)
+    else:
+        updated_state["citations"] = graph_nodes.merge_citations(
+            result.citations,
+            list(state.get("tool_citations") or []),
+        )
     updated_state["answer_used_fallback"] = result.used_fallback
     updated_state["node_trace"] = graph_nodes.append_trace(
         state.get("node_trace"),
@@ -639,11 +644,19 @@ def replay_answer_events_from_state(
         tool_result_refs=list(state.get("tool_result_refs") or []),
         relevant_history=list(state.get("relevant_history") or []),
         recovery_actions=list(state.get("context_recovery_actions") or []),
+        protected_citations=list(
+            state.get("citations") or state.get("previous_citations") or []
+        ),
     )
-    result = llm_answer_service.generate_answer(
-        question,
-        documents,
-        conversation_context=answer_context,
+    answer_context["answer_mode"] = str(state.get("answer_mode") or "")
+    result = (
+        graph_nodes.build_source_lookup_result(state)
+        if str(state.get("answer_mode") or "") == "source_lookup"
+        else llm_answer_service.generate_answer(
+            question,
+            documents,
+            conversation_context=answer_context,
+        )
     )
     updated_state = build_answer_state_from_result(state, result)
     updated_state["answer_context"] = answer_context
@@ -724,6 +737,15 @@ def stream_chat_graph_events(
         "knowledge_base_id": payload.knowledge_base_id,
         "conversation_id": conversation.id,
         "thread_id": conversation.thread_id,
+        # tool_call_count 是单轮临时状态。新问题复用同一 thread checkpoint 时，
+        # 必须从 0 开始；人工审核 resume 不会重新构造 initial_state，因此会保留原计数。
+        "tool_call_count": 0,
+        "history_recovery_count": 0,
+        "tool_call": {},
+        "tool_results": [],
+        "tool_result_refs": [],
+        "tool_citations": [],
+        "tool_error": "",
         **graph_contexts,
     }
     graph = build_checkpointed_workflow(session, retrieve_top_k=payload.retrieve_top_k)
@@ -968,6 +990,13 @@ def run_chat_graph_impl(
         "knowledge_base_id": payload.knowledge_base_id,
         "conversation_id": conversation.id,
         "thread_id": conversation.thread_id,
+        "tool_call_count": 0,
+        "history_recovery_count": 0,
+        "tool_call": {},
+        "tool_results": [],
+        "tool_result_refs": [],
+        "tool_citations": [],
+        "tool_error": "",
         **graph_contexts,
     }
     graph = build_checkpointed_workflow(session, retrieve_top_k=payload.retrieve_top_k)
