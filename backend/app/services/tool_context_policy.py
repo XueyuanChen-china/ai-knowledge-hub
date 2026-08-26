@@ -166,7 +166,11 @@ def compact_tool_refs(
     """按工具结果生命周期淘汰旧结果，不删除持久化记录。"""
 
     unique = dedupe_tool_refs(refs)
-    protected = [ref for ref in unique if ref.importance == "pinned" or ref.citation_used]
+    protected = [
+        ref
+        for ref in unique
+        if ref.importance == "pinned" or ref.citation_used or ref.protected_for_turn
+    ]
     candidates = [ref for ref in unique if ref not in protected]
     candidate_slots = max(0, max_items - len(protected))
     keep = protected + (candidates[-candidate_slots:] if candidate_slots else [])

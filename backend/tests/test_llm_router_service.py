@@ -70,6 +70,20 @@ class LlmRouterServiceTests(unittest.TestCase):
         self.assertEqual(payload["temperature"], 0)
         self.assertEqual(payload["max_tokens"], 64)
 
+    def test_build_chat_completion_payload_adds_reasoning_effort_only_when_set(self) -> None:
+        payload = llm_router_service.build_chat_completion_payload(
+            model="gpt-5.6-luna",
+            messages=[{"role": "user", "content": "question"}],
+            reasoning_effort="high",
+        )
+        self.assertEqual(payload["reasoning_effort"], "high")
+
+        default_payload = llm_router_service.build_chat_completion_payload(
+            model="qwen-turbo",
+            messages=[{"role": "user", "content": "question"}],
+        )
+        self.assertNotIn("reasoning_effort", default_payload)
+
     def test_parse_native_tool_call(self) -> None:
         call = llm_router_service.parse_native_tool_call(
             {

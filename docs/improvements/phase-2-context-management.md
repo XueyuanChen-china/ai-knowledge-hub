@@ -131,7 +131,9 @@ context_answer_max_tokens = 6000
 
 Router max_recent_messages = 2
 context_rewrite_recent_messages = 8（约 4 轮）
-context_answer_recent_messages = 12（约 6 轮）
+context_answer_recent_rounds = 4（活动原文窗口）
+context_answer_recent_messages = 8（约 4 轮）
+context_answer_hard_active_rounds = 2（Hard 水位时保留）
 
 context_router_history_max_tokens = 0
 context_rewrite_history_max_tokens = 400
@@ -139,10 +141,10 @@ context_answer_history_max_tokens = 1000
 context_answer_retrieval_max_tokens = 4000
 context_answer_tool_max_tokens = 1000
 
-context_summary_keep_recent_messages = 4（最近 2 轮）
+context_summary_keep_recent_messages = 8（最近 4 轮）
 context_summary_min_compactable_messages = 4（至少 2 轮才有压缩资格）
 context_summary_min_compactable_tokens = 100
-context_summary_max_batch_messages = 12
+context_summary_max_batch_messages = 16（单次摘要批次上限）
 context_summary_target_ratio = 0.60
 context_pack_hard_watermark_ratio = 0.95
 context_pack_target_ratio = 0.75
@@ -356,9 +358,9 @@ BudgetBreakdown
 assistant 两条消息：
 
 ```text
-历史消息：T1 T2 T3 T4 T5 T6
-Answer 默认保留：          T5 T6
-摘要范围：                 T1 T2 T3 T4
+历史消息：T1 T2 T3 T4 T5 T6 T7 T8
+Answer 默认保留：          T5 T6 T7 T8（最近 4 轮）
+摘要候选：                 T1 T2 T3 T4（更早的 retired rounds）
 ```
 
 它能保证用户刚刚说过的内容还在，但它有明显缺点：更早的关键决定可能被淘汰。
@@ -472,8 +474,9 @@ conversation_memories             -> 少量明确的重要事实/决定/约束
 maybe_update_conversation_summary(conversation_id, session)
 ```
 
-系统保留最近 4 条消息（约 2 轮）不放入摘要，让近期原文继续直接进入 ContextPack。窗口外、且
-`message.id > context_summary_through_message_id` 的消息才是“未摘要历史”。
+系统把最近 4 轮原文作为 active window，不放入摘要，让近期原文继续直接进入 ContextPack。
+超出 active window、且 `message.id > context_summary_through_message_id` 的消息属于
+retired rounds 候选区。这个候选区在数据库中没有总轮数上限，但每次摘要最多处理一批消息。
 
 摘要采用“历史区域软水位”，而不是按整段会话的固定字符数触发：
 
@@ -499,18 +502,18 @@ Pack 硬水位：当前节点 Pack 预计达到 max_tokens 的 95%
 Answer 调用模型前真正不可突破的上限。
 
 消息数量不再单独触发摘要。短消息即使累计很多，只要实际历史区域未到 70%，就继续使用
-滑动窗口和按需历史恢复；“至少 4 条”只表示本次压缩有足够收益。计算历史区域时只使用
-Answer 当前可见的最近 12 条未摘要原文，数据库中的完整历史仍然保留。
+活动窗口和按需历史恢复；“至少 4 条”只表示本次压缩有足够收益。计算历史区域时只使用
+Answer 当前可见的最近 8 条未摘要消息，数据库中的完整历史仍然保留。
 
 ### 7.3 摘要游标为什么重要
 
-假设历史为 12 条消息（约 6 轮问答）：
+假设历史为 16 条消息（约 8 轮问答）：
 
 ```text
-M1 M2 M3 M4 M5 M6 M7 M8 M9 M10 M11 M12
+M1 M2 M3 M4 M5 M6 M7 M8 M9 M10 M11 M12 M13 M14 M15 M16
 ```
 
-系统保留最近 4 条消息（约 2 轮），因此第一次摘要的输入可能是：
+系统保留最近 8 条消息（约 4 轮），因此第一次摘要的输入可能是：
 
 ```text
 M1 M2 M3 M4 M5 M6 M7 M8
@@ -522,8 +525,8 @@ M1 M2 M3 M4 M5 M6 M7 M8
 context_summary_through_message_id = M8
 ```
 
-不能错误地把游标写成 M12，因为 M9 到 M12 只是近期窗口，并没有进入摘要。否则
-下一次摘要会误以为 M9 到 M12 已经被总结过，造成历史事实丢失。
+不能错误地把游标写成 M16，因为 M9 到 M16 只是近期窗口，并没有进入摘要。否则
+下一次摘要会误以为 M9 到 M16 已经被总结过，造成历史事实丢失。
 
 ### 7.4 摘要失败怎么办
 
@@ -846,12 +849,13 @@ Answer 只能引用 `[1]`、`[2]`、`[3]`。被省略的 chunk 不会继续作�
 ### 11.4 摘要触发后的行为
 
 当窗口外未摘要历史跨过历史区域软水位时，保存助手消息后会尝试生成摘要。它是维护流程中的
-“压缩较早对话”步骤，不在 `build_context_pack()` 内临时调用 LLM，避免把摘要延迟叠加到当前回答：
+“压缩 retired rounds”步骤。若当前 Answer Pack 达到 95% Hard 水位，`build_answer_context()`
+会额外把 active window 从 4 轮临时收缩为 2 轮，并调用一次摘要 LLM：
 
 ```text
 messages 表完整保留
        |
-       +--> 最近 4 条继续作为原文窗口（约 2 轮）
+       +--> 最近 8 条继续作为 active 原文窗口（约 4 轮）
        |
        +--> 达到 70% 后，从最早的未摘要消息中动态选择一批
                   |
@@ -863,7 +867,7 @@ messages 表完整保留
 下次请求时，Context Manager 同时使用：
 
 ```text
-结构化摘要 + 最近 4 条原文 + 必要时恢复的相关历史
+结构化摘要 + 最近 8 条原文 + 必要时恢复的相关历史
 ```
 
 所以不是“只剩摘要”，而是摘要、窗口和按需恢复三层组合。
@@ -1025,7 +1029,7 @@ truncated
 
 ### 练习二：观察摘要游标
 
-构造 12 条较长消息，设置保留最近 4 条，检查摘要输入从最早消息开始动态选取，并确认：
+构造 16 条较长消息，设置保留最近 8 条，检查摘要输入从最早消息开始动态选取，并确认：
 
 ```text
 context_summary_through_message_id

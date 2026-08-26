@@ -117,6 +117,8 @@ class ToolResultRef:
     created_at: str = ""
     used_in_answer: bool = False
     citation_used: bool = False
+    # 当前轮刚产生的工具结果，在本轮 Answer 完成前不能被上下文裁剪。
+    protected_for_turn: bool = False
     importance: str = "normal"
 
     def to_dict(self) -> Dict[str, Any]:

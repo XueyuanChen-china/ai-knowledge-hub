@@ -66,6 +66,25 @@ TOOL_INTENT_MARKERS = (
     "知识条目详情",
     "条目内容",
     "这个知识条目",
+    "出处",
+    "来源",
+    "哪个文件",
+    "哪份文件",
+    "来自哪个",
+    "原文位置",
+    "具体文件",
+    "文件名",
+)
+
+SOURCE_LOOKUP_MARKERS = (
+    "出处",
+    "来源",
+    "哪个文件",
+    "哪份文件",
+    "来自哪个",
+    "原文位置",
+    "具体文件",
+    "文件名",
 )
 
 DIRECT_GREETING_PATTERNS = (
@@ -90,24 +109,36 @@ def router_node(state: GraphState) -> GraphState:
     knowledge_base_id = state.get("knowledge_base_id")
     router_context = dict(state.get("router_context") or {})
     router_context["previous_citations"] = list(state.get("previous_citations") or [])
-    llm_decision = llm_router_service.route_question_with_llm(
-        question,
-        knowledge_base_id,
-        conversation_context=router_context,
-    )
-    if llm_decision is not None:
-        route = llm_decision.route
-        route_reason = llm_decision.reason
+    source_lookup = is_source_lookup_question(question)
+    previous_citations = list(state.get("previous_citations") or [])
+    if source_lookup and previous_citations:
+        # 已有上一轮引用时可以直接根据 doc_id 调工具，不需要重新检索。
+        route = TOOL_ROUTE
+        route_reason = "用户要求查找上一轮检索结果的具体来源"
+    elif source_lookup:
+        # 首次查来源必须先检索原句，拿到候选 doc_id 后才能安全调用 get_document。
+        route = RAG_ROUTE
+        route_reason = "用户要求查找具体来源，先检索原文再读取文档"
     else:
-        route, route_reason = route_question(
+        llm_decision = llm_router_service.route_question_with_llm(
             question,
             knowledge_base_id,
-            previous_citations=list(state.get("previous_citations") or []),
+            conversation_context=router_context,
         )
+        if llm_decision is not None:
+            route = llm_decision.route
+            route_reason = llm_decision.reason
+        else:
+            route, route_reason = route_question(
+                question,
+                knowledge_base_id,
+                previous_citations=previous_citations,
+            )
 
     updated_state = dict(state)
     updated_state["route"] = route
     updated_state["route_reason"] = route_reason
+    updated_state["answer_mode"] = "source_lookup" if source_lookup else ""
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [START_NODE, ROUTER_NODE])
     return updated_state
 
@@ -124,21 +155,13 @@ def query_rewrite_node(state: GraphState) -> GraphState:
 
     rewrite_context = dict(state.get("rewrite_context") or {})
     recent_messages = list(rewrite_context.get("recent_messages") or [])
-    # 历史恢复结果作为“历史消息”补充给 Rewrite，但不覆盖原始近期消息。
-    for item in list(state.get("relevant_history") or []):
-        if isinstance(item, dict) and item.get("content"):
-            recent_messages.append(
-                {
-                    "role": "history",
-                    "content": str(item.get("content") or ""),
-                }
-            )
     decision = query_rewrite_service.decide_query_rewrite(question, recent_messages)
     queries = [question]
     if decision.need_rewrite:
         rewritten_queries = query_rewrite_service.rewrite_question_with_llm(
             question,
             recent_messages,
+            conversation_context=rewrite_context,
         )
         if rewritten_queries:
             queries = rewritten_queries
@@ -230,9 +253,13 @@ def history_recovery_node(state: GraphState, session: Session) -> GraphState:
         thread_id=str(state.get("thread_id") or ""),
         session=session,
     )
+    history_ref.protected_for_turn = True
     updated_state["tool_result_refs"] = list(state.get("tool_result_refs") or []) + [history_ref.to_dict()]
     updated_state["history_recovery_used"] = True
-    updated_state["tool_call_count"] = int(state.get("tool_call_count") or 0) + 1
+    # 历史恢复是上下文基础设施，不占用普通知识库工具的单轮配额。
+    updated_state["history_recovery_count"] = int(
+        state.get("history_recovery_count") or 0
+    ) + 1
 
     recovered_items: list[dict] = []
     if result.ok:
@@ -376,7 +403,7 @@ def rag_retrieve_node(
 
 
 def tool_decision_node(state: GraphState) -> GraphState:
-    """让 Qwen 原生选择只读工具，模型不可用时使用规则兜底。"""
+    """让 OpenAI 兼容模型原生选择只读工具，模型不可用时使用规则兜底。"""
 
     question = str(state.get("question") or "")
     retrieved_docs = list(state.get("retrieved_docs") or [])
@@ -401,10 +428,27 @@ def tool_decision_node(state: GraphState) -> GraphState:
             # 原生工具协议不可用时继续走可测试的本地规则，避免普通问答整体失败。
             planner_mode = "rule_fallback"
         if request is None:
-            request = plan_readonly_tool(question, retrieved_docs)
+            request = plan_readonly_tool(
+                question,
+                retrieved_docs,
+                previous_citations=previous_citations,
+            )
             if request is not None:
                 planner_mode = "rule_fallback"
+    if is_source_lookup_question(question):
+        # 来源查询的目标是确定性地定位命中文档，不能让模型把它改成普通搜索或
+        # 猜测另一个 document_id。优先使用当前检索候选/上一轮引用中的 ID。
+        source_request = plan_readonly_tool(
+            question,
+            retrieved_docs,
+            previous_citations=previous_citations,
+        )
+        if source_request is not None:
+            request = source_request
+            planner_mode = "rule_source_lookup"
     updated_state = dict(state)
+    if is_source_lookup_question(question):
+        updated_state["answer_mode"] = "source_lookup"
     if request is None:
         updated_state["tool_call"] = {}
         updated_state["tool_used"] = False
@@ -500,6 +544,7 @@ def tool_call_node(state: GraphState, session: Session) -> GraphState:
         thread_id=str(state.get("thread_id") or ""),
         session=session,
     )
+    tool_ref.protected_for_turn = True
     updated_state["tool_result_refs"] = list(state.get("tool_result_refs") or []) + [tool_ref.to_dict()]
     updated_state["tool_citations"] = list(result.citations)
     updated_state["tool_error"] = str(result.error_message or "") if not result.ok else ""
@@ -514,7 +559,7 @@ def answer_node(state: GraphState) -> GraphState:
     """Day 18 Answer Node。
 
     职责：
-    - 基于 context / retrieved_docs 调用 Qwen 生成答案
+    - 基于 context / retrieved_docs 调用 OpenAI 兼容模型生成答案
     - 返回 answer
     - 返回 doc/chunk 级 citations
     """
@@ -532,12 +577,17 @@ def answer_node(state: GraphState) -> GraphState:
         tool_result_refs=_tool_result_context_refs(state),
         relevant_history=list(state.get("relevant_history") or []),
         recovery_actions=list(state.get("context_recovery_actions") or []),
+        protected_citations=list(
+            state.get("citations") or state.get("previous_citations") or []
+        ),
     )
     answer_context["rewrite_queries"] = list(state.get("rewrite_queries") or [])
     answer_context["retrieval_context"] = str(
         answer_context.get("retrieval_context") or ""
     )
-    if has_answer_context:
+    if str(state.get("answer_mode") or "") == "source_lookup":
+        result = build_source_lookup_result(state)
+    elif has_answer_context:
         result = llm_answer_service.generate_answer(
             question,
             retrieved_docs,
@@ -550,9 +600,10 @@ def answer_node(state: GraphState) -> GraphState:
     updated_state["answer"] = result.answer
     updated_state["context"] = result.context
     updated_state["answer_context"] = answer_context
-    updated_state["citations"] = merge_citations(
-        result.citations,
-        list(state.get("tool_citations") or []),
+    updated_state["citations"] = (
+        list(result.citations)
+        if str(state.get("answer_mode") or "") == "source_lookup"
+        else merge_citations(result.citations, list(state.get("tool_citations") or []))
     )
     updated_state["answer_used_fallback"] = result.used_fallback
     updated_state["used_tool_result_refs"] = [
@@ -562,6 +613,104 @@ def answer_node(state: GraphState) -> GraphState:
     ]
     updated_state["node_trace"] = append_trace(state.get("node_trace"), [ANSWER_NODE, END_NODE])
     return updated_state
+
+
+def is_source_lookup_question(question: str) -> bool:
+    """识别要求“这句话来自哪个文件/原文位置”的来源查询意图。"""
+
+    normalized = normalize_question(question)
+    return any(marker in normalized for marker in SOURCE_LOOKUP_MARKERS)
+
+
+def build_source_lookup_result(state: GraphState) -> rag_service.RagAnswerResult:
+    """把来源查询变成确定性的来源清单，避免模型把它改写成普通总结。"""
+
+    tool_results = list(state.get("tool_results") or [])
+    successful_result = next(
+        (
+            result
+            for result in tool_results
+            if isinstance(result, dict) and result.get("ok") and isinstance(result.get("data"), dict)
+        ),
+        None,
+    )
+    retrieved_docs = list(state.get("retrieved_docs") or [])
+    tool_citations = list(state.get("tool_citations") or [])
+    previous_citations = list(state.get("previous_citations") or [])
+
+    if successful_result is None:
+        error = str(state.get("tool_error") or "未找到可确认的来源文件。")
+        return rag_service.RagAnswerResult(
+            answer=f"来源查询失败：{error}",
+            context="",
+            citations=tool_citations,
+            used_fallback=False,
+        )
+
+    data = successful_result["data"]
+    document_id = data.get("document_id")
+    matching_doc = next(
+        (
+            document
+            for document in retrieved_docs
+            if document.doc_id is not None and str(document.doc_id) == str(document_id)
+        ),
+        None,
+    )
+    metadata = dict(matching_doc.metadata or {}) if matching_doc is not None else {}
+    source_content = (
+        matching_doc.content
+        if matching_doc is not None
+        else str(data.get("content") or "")
+    ).strip()
+
+    previous_citation = next(
+        (
+            dict(citation)
+            for citation in previous_citations
+            if isinstance(citation, dict)
+            and document_id is not None
+            and str(citation.get("doc_id")) == str(document_id)
+        ),
+        None,
+    )
+    citation = (
+        rag_service.build_citations([matching_doc])[0]
+        if matching_doc is not None
+        else (previous_citation or (dict(tool_citations[0]) if tool_citations else {
+            "doc_id": document_id,
+            "chunk_id": None,
+            "knowledge_item_id": None,
+            "title": str(data.get("filename") or ""),
+            "score": 1.0,
+        }))
+    )
+    citation["source"] = "source_lookup"
+    citations = [citation]
+
+    lines = [
+        f"文件名：{data.get('filename') or citation.get('title') or '-'}",
+        f"document_id：{document_id or '-'}",
+        f"knowledge_item_id：{citation.get('knowledge_item_id') or '-'}",
+        f"chunk_id：{citation.get('chunk_id') or '-'}",
+    ]
+    page_start = metadata.get("page_start") or metadata.get("page_number")
+    page_end = metadata.get("page_end") or page_start
+    if page_start:
+        lines.append(f"页码：{page_start}" if page_start == page_end else f"页码：{page_start}-{page_end}")
+    heading_path = metadata.get("heading_path")
+    if isinstance(heading_path, list) and heading_path:
+        lines.append(f"章节：{' / '.join(str(item) for item in heading_path)}")
+    lines.extend(["", "命中的原文：", source_content or "工具未返回正文。"])
+    if data.get("content_truncated") and matching_doc is None:
+        lines.append("（文档正文超过工具返回上限，以上内容可能被截断。）")
+
+    return rag_service.RagAnswerResult(
+        answer="\n".join(lines),
+        context=source_content,
+        citations=citations,
+        used_fallback=False,
+    )
 
 
 def _tool_result_context_texts(state: GraphState) -> list[str]:

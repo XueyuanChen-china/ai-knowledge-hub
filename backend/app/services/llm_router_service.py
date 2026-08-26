@@ -26,7 +26,7 @@ class RouterDecision:
 
 @dataclass
 class NativeToolCall:
-    """Qwen OpenAI 兼容接口返回的原生工具调用。"""
+    """OpenAI 兼容接口返回的原生工具调用。"""
 
     name: str
     arguments: dict[str, Any]
@@ -63,6 +63,7 @@ def route_question_with_llm(
             model=settings.llm_router_model,
             messages=messages,
             timeout_seconds=settings.llm_router_timeout_seconds,
+            reasoning_effort=settings.llm_router_reasoning_effort,
         )
     except RuntimeError:
         get_metrics().record_operation(
@@ -119,8 +120,17 @@ def build_router_messages(
     context_pack = context_manager.build_context_pack(
         purpose="router",
         messages=list(raw_context.get("recent_messages") or []),
-        summary=str(raw_context.get("summary") or ""),
+        summary=raw_context.get("conversation_summary")
+        or str(raw_context.get("summary") or ""),
+        current_question=question,
+        system_instructions=list(raw_context.get("system_instructions") or []),
+        persistent_memory=list(raw_context.get("persistent_memory") or []),
+        relevant_history=list(raw_context.get("relevant_history") or []),
     )
+    if context_pack.system_instructions:
+        system_prompt += "\n本次请求的附加约束：\n" + "\n".join(
+            context_pack.system_instructions
+        )
     if context_pack.summary:
         prompt_lines.append(f"conversation summary:\n{context_pack.summary}")
     if context_pack.recent_messages:
@@ -130,6 +140,16 @@ def build_router_messages(
                 f"{item['role']}: {item['content']}"
                 for item in context_pack.recent_messages
             )
+        )
+    if context_pack.persistent_memory:
+        prompt_lines.append(
+            "persistent memory:\n"
+            + "\n".join(item.content for item in context_pack.persistent_memory)
+        )
+    if context_pack.relevant_history:
+        prompt_lines.append(
+            "relevant conversation history:\n"
+            + "\n".join(item.content for item in context_pack.relevant_history)
         )
     previous_citations = raw_context.get("previous_citations") or []
     if previous_citations:
@@ -153,6 +173,7 @@ def call_openai_compatible_chat(
     timeout_seconds: int,
     max_tokens: int = 64,
     json_mode: bool = True,
+    reasoning_effort: str = "",
 ) -> str:
     """调用 OpenAI 兼容 chat/completions 接口。"""
 
@@ -161,6 +182,7 @@ def call_openai_compatible_chat(
         messages=messages,
         max_tokens=max_tokens,
         json_mode=json_mode,
+        reasoning_effort=reasoning_effort,
     )
 
     return extract_message_content(
@@ -182,14 +204,16 @@ def call_openai_compatible_chat_with_tools(
     tools: list[dict[str, Any]],
     timeout_seconds: int,
     max_tokens: int = 256,
+    reasoning_effort: str = "",
 ) -> Optional[NativeToolCall]:
-    """使用 OpenAI 兼容的 tools/tool_choice 请求 Qwen 原生工具调用。"""
+    """使用 OpenAI 兼容的 tools/tool_choice 请求原生工具调用。"""
 
     payload = build_chat_completion_payload(
         model=model,
         messages=messages,
         max_tokens=max_tokens,
         json_mode=False,
+        reasoning_effort=reasoning_effort,
     )
     payload["tools"] = tools
     payload["tool_choice"] = "auto"
@@ -282,6 +306,7 @@ def build_chat_completion_payload(
     messages: list[dict[str, str]],
     max_tokens: int = 64,
     json_mode: bool = True,
+    reasoning_effort: str = "",
 ) -> dict:
     """构造 OpenAI 兼容 chat/completions 请求体。
 
@@ -298,6 +323,8 @@ def build_chat_completion_payload(
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+    if reasoning_effort.strip():
+        payload["reasoning_effort"] = reasoning_effort.strip()
     return payload
 
 

@@ -23,11 +23,37 @@ def estimate_tokens(text: str) -> int:
     return max(1, ceil(len(normalized) / 2))
 
 
+def _effective_input_budget(
+    configured_budget: int,
+    model_window_tokens: int,
+    *,
+    output_reserve_tokens: int,
+    prompt_overhead_tokens: int,
+    reasoning_safety_margin_tokens: int,
+) -> int:
+    """把模型总窗口换算成当前请求可使用的输入预算。
+
+    model_window_tokens 为 0 时保持现有应用级预算，避免未知模型窗口导致
+    本地开发行为突然变化。
+    """
+
+    if model_window_tokens <= 0:
+        return max(1, int(configured_budget))
+    available = (
+        int(model_window_tokens)
+        - max(0, int(output_reserve_tokens))
+        - max(0, int(prompt_overhead_tokens))
+        - max(0, int(reasoning_safety_margin_tokens))
+    )
+    return max(1, min(int(configured_budget), available))
+
+
 @dataclass(frozen=True)
 class ContextBudget:
     """一次 Context Pack 的预算。"""
 
     max_tokens: int
+    max_recent_rounds: int
     max_recent_messages: int
     max_message_chars: int
     max_summary_tokens: int
@@ -43,7 +69,14 @@ class ContextBudget:
         normalized = purpose.strip().lower()
         if normalized == "router":
             return cls(
-                max_tokens=settings.context_router_max_tokens,
+                max_tokens=_effective_input_budget(
+                    settings.context_router_max_tokens,
+                    settings.context_router_model_window_tokens,
+                    output_reserve_tokens=settings.context_output_reserve_tokens,
+                    prompt_overhead_tokens=settings.context_prompt_overhead_tokens,
+                    reasoning_safety_margin_tokens=settings.context_reasoning_safety_margin_tokens,
+                ),
+                max_recent_rounds=1,
                 max_recent_messages=2,
                 max_message_chars=settings.context_message_max_chars,
                 max_summary_tokens=settings.context_router_summary_max_tokens,
@@ -55,7 +88,14 @@ class ContextBudget:
             )
         if normalized == "rewrite":
             return cls(
-                max_tokens=settings.context_rewrite_max_tokens,
+                max_tokens=_effective_input_budget(
+                    settings.context_rewrite_max_tokens,
+                    settings.context_rewrite_model_window_tokens,
+                    output_reserve_tokens=settings.context_output_reserve_tokens,
+                    prompt_overhead_tokens=settings.context_prompt_overhead_tokens,
+                    reasoning_safety_margin_tokens=settings.context_reasoning_safety_margin_tokens,
+                ),
+                max_recent_rounds=4,
                 max_recent_messages=settings.context_rewrite_recent_messages,
                 max_message_chars=settings.context_message_max_chars,
                 max_summary_tokens=settings.context_rewrite_summary_max_tokens,
@@ -67,7 +107,14 @@ class ContextBudget:
             )
         if normalized == "answer":
             return cls(
-                max_tokens=settings.context_answer_max_tokens,
+                max_tokens=_effective_input_budget(
+                    settings.context_answer_max_tokens,
+                    settings.context_answer_model_window_tokens,
+                    output_reserve_tokens=settings.context_output_reserve_tokens,
+                    prompt_overhead_tokens=settings.context_prompt_overhead_tokens,
+                    reasoning_safety_margin_tokens=settings.context_reasoning_safety_margin_tokens,
+                ),
+                max_recent_rounds=settings.context_answer_recent_rounds,
                 max_recent_messages=settings.context_answer_recent_messages,
                 max_message_chars=settings.context_message_max_chars,
                 max_summary_tokens=settings.context_answer_summary_max_tokens,

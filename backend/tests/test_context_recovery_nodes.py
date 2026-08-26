@@ -58,7 +58,8 @@ class ContextRecoveryNodeTests(unittest.TestCase):
             updated["answer_context"]["relevant_history"][0]["source_ids"],
             ["9"],
         )
-        self.assertEqual(updated["tool_call_count"], 1)
+        self.assertEqual(updated.get("tool_call_count", 0), 0)
+        self.assertEqual(updated["history_recovery_count"], 1)
 
 
 if __name__ == "__main__":

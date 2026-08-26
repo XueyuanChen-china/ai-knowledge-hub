@@ -6,7 +6,7 @@
 
 - Docker Desktop 已启动。
 - 需要至少约 4 GB 可用 Docker 内存。Elasticsearch 在本地运行时占用相对明显。
-- 若要真实测试 OSS 上传或 Qwen 问答，在执行 Compose 前由终端环境导出相应密钥；密钥不写入 Compose 文件或 Git。
+- 若要真实测试 OSS 上传或 OpenAI 兼容模型问答，在执行 Compose 前由终端环境导出相应密钥；密钥不写入 Compose 文件或 Git。当前示例模型为 `gpt-5.6-luna`，也可以替换为其他兼容模型。
 
 ```bash
 export AUTH_JWT_SECRET='local-development-secret-change-me'
