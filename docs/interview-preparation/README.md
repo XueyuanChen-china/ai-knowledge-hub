@@ -79,6 +79,7 @@ flowchart LR
 | [08-frontend-docker-ci-observability-security.md](08-frontend-docker-ci-observability-security.md) | React、Docker、CI、日志、metrics、安全边界          |
 | [09-high-frequency-interview-questions.md](09-high-frequency-interview-questions.md)               | 高频问题与参考回答                                  |
 | [10-key-code-walkthrough.md](10-key-code-walkthrough.md)                                           | 面试前必须能讲清的关键代码入口                      |
+| [11-document-splitting-strategy.md](11-document-splitting-strategy.md)                               | 多格式解析、Section、Block、Chunk 与 overlap 面试回答 |
 
 ## 六、推荐复习顺序
 
